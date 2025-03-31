@@ -1,6 +1,7 @@
 # Professional Structural FEM Drawing App
 
-This **React + Konva** application allows you to interactively create structural finite element (FE) models. You can easily place **nodes**, define **members** (beam or truss), specify **supports** (fixed, roller-x, roller-y, hinge), and assign **loads** (point, uniform, nonuniform). The app then **organizes** all geometry and properties into a **structured JSON** output that can be used in frameworks like **OpenSeesPy** or other open-source FE modeling tools.
+This **React + Konva** application allows you to interactively create structural finite element (FE) models. You can easily place **nodes**, define **members** (beam or truss), specify **supports** (fixed, roller-x, roller-y, hinge), and assign **loads** (point, uniform, nonuniform). The app then **organizes** all geometry and properties into a **structured JSON** output that can be used in frameworks like **OpenSeesPy** or other open-source FE modeling tools. You can view the live app here:  
+**[https://mtalebi.github.io/FEM-Drawing-Tool/](https://mtalebi.github.io/FEM-Drawing-Tool/)**
 
 ---
 
