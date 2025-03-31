@@ -39,4 +39,3 @@ Email: [talebika@ualberta.ca](mailto:talebika@ualberta.ca)
 Website & more structural engineering tools: [mtalebi.com](https://mtalebi.com)
 
 Feel free to reach out with questions, feedback, or suggestions to improve this open-source FE modeling assistant.
-```
