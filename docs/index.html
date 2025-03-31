@@ -49,6 +49,7 @@
             border-top: 1px solid #ccc;
             padding-top: 10px;
         }
+        
     </style>
 </head>
 <body>
@@ -116,18 +117,6 @@
                         <label>End Value:</label><br>
                         <input type="number" id="nuEndVal" value="-500"><br>
                     </div>
-                    
-                    <!-- Grid settings -->
-                    <div style="margin-top: 10px;">
-                        <label>Grid spacing (meters):</label><br>
-                        <select id="gridSpacingSelect">
-                            <option value="0.1">0.1 m</option>
-                            <option value="0.5">0.5 m</option>
-                            <option value="1" selected>1 m</option>
-                            <option value="2">2 m</option>
-                            <option value="5">5 m</option>
-                        </select>
-                    </div>
                 </div>
             </div>
             
@@ -173,10 +162,11 @@
     <script>
         // Main model data
         const model = {
+            // All coordinates below should be in *meters*.
             nodes: {},           // { nodeId: { x, y } }
             members: {},         // { memId: { startNode, endNode, type: beam/truss } }
             supports: {},        // { nodeId: { type: fixed/roller_x/roller_y/hinge } }
-            loads: {},           // { loadId: { type, node or member, etc. } }
+            loads: {},           // { loadId: { ... load data ... } }
             nodeCounter: 0,
             memberCounter: 0,
             loadCounter: 0
@@ -195,14 +185,14 @@
             isSnap: true,
             gridSpacing: 1,       // in meters
             scaleFactor: 30,      // pixels per meter
-            originX: 0,           // X coordinate of origin in screen space
-            originY: 0            // Y coordinate of origin in screen space (will be set to canvas.height)
+            originX: 0,           // X coordinate of origin in screen
+            originY: 0            // Y coordinate of origin in screen
         };
 
         // Temporary selected node for member creation
         let tempSelectedNode = null;
 
-        // Store the max member length for support size scaling
+        // Store the max member length (in meters) to scale arrow/support sizes
         let maxMemberLength = 0;
 
         // History stack for undo
@@ -213,33 +203,30 @@
         const canvas = document.getElementById('femCanvas');
         const ctx = canvas.getContext('2d');
         
-        // For cursor coordinates
+        // For cursor coordinates (in screen space)
         let cursorX = 0;
         let cursorY = 0;
-        let snappedX = 0;
-        let snappedY = 0;
 
         // Set canvas size and origin
         function resizeCanvas() {
             canvas.width = window.innerWidth - 320;
             canvas.height = window.innerHeight;
             
-            // Set origin at bottom right
-            config.originX = 50; // Some padding from right edge
-            config.originY = canvas.height - 50; // Some padding from bottom edge
+            // Set origin at bottom-left with some padding
+            config.originX = 50;
+            config.originY = canvas.height - 50;
             
-            // Make sure origin is at a grid point to ensure perfect alignment
+            // Optionally snap origin to the grid in screen coordinates
             config.originX = Math.round(config.originX / config.scaleFactor) * config.scaleFactor;
             config.originY = Math.round(config.originY / config.scaleFactor) * config.scaleFactor;
             
             draw();
         }
 
-        // Initialize
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // UI Element References
+        // UI references
         const modeRadios = document.querySelectorAll('input[name="mode"]');
         const memberTypeRadios = document.querySelectorAll('input[name="memType"]');
         const supportTypeRadios = document.querySelectorAll('input[name="supportType"]');
@@ -257,55 +244,49 @@
         const saveBtn = document.getElementById('saveBtn');
         const modelStats = document.getElementById('model-stats');
 
-        // Handle mode change opacity
         function updateOptionsVisibility() {
+            // fade out / enable sections based on mode
             document.querySelector('.member-options > div').classList.toggle('faded', config.mode !== 'member');
             document.querySelector('.support-options > div').classList.toggle('faded', config.mode !== 'support');
             document.querySelector('.load-options > div').classList.toggle('faded', config.mode !== 'load');
             
-            // Disable/enable appropriate inputs
-            const memberInputs = document.querySelectorAll('.member-options input');
-            memberInputs.forEach(input => {
-                input.disabled = config.mode !== 'member';
+            // enable/disable inputs
+            document.querySelectorAll('.member-options input').forEach(input => {
+                input.disabled = (config.mode !== 'member');
+            });
+            document.querySelectorAll('.support-options input').forEach(input => {
+                input.disabled = (config.mode !== 'support');
+            });
+            document.querySelectorAll('.load-options input').forEach(input => {
+                input.disabled = (config.mode !== 'load');
             });
             
-            const supportInputs = document.querySelectorAll('.support-options input');
-            supportInputs.forEach(input => {
-                input.disabled = config.mode !== 'support';
-            });
-            
-            const loadInputs = document.querySelectorAll('.load-options input');
-            loadInputs.forEach(input => {
-                input.disabled = config.mode !== 'load';
-            });
-            
-            // Show/hide nonuniform load options
-            uniformLoadValueDiv.style.display = config.loadType === 'nonuniform' ? 'none' : 'block';
-            nonuniformLoadValuesDiv.style.display = config.loadType === 'nonuniform' ? 'block' : 'none';
-        }
-
-        // Calculate max member length (for support size scaling)
-        function updateMaxMemberLength() {
-            maxMemberLength = 0;
-            for (const mid in model.members) {
-                const mem = model.members[mid];
-                const sn = mem.startNode;
-                const en = mem.endNode;
-                if (!model.nodes[sn] || !model.nodes[en]) continue;
-                
-                const { x: sx, y: sy } = model.nodes[sn];
-                const { x: ex, y: ey } = model.nodes[en];
-                const dx = ex - sx;
-                const dy = ey - sy;
-                const length = Math.sqrt(dx*dx + dy*dy);
-                
-                if (length > maxMemberLength) {
-                    maxMemberLength = length;
-                }
+            // Show/hide nonuniform fields
+            if (config.loadType === 'nonuniform') {
+                uniformLoadValueDiv.style.display = 'none';
+                nonuniformLoadValuesDiv.style.display = 'block';
+            } else {
+                uniformLoadValueDiv.style.display = 'block';
+                nonuniformLoadValuesDiv.style.display = 'none';
             }
         }
 
-        // Set up event listeners
+        function updateMaxMemberLength() {
+            // Recompute maxMemberLength based on all existing members (in meters).
+            maxMemberLength = 0;
+            for (const mid in model.members) {
+                const mem = model.members[mid];
+                const sn = model.nodes[mem.startNode];
+                const en = model.nodes[mem.endNode];
+                if (!sn || !en) continue;
+                const dx = en.x - sn.x;
+                const dy = en.y - sn.y;
+                const len = Math.sqrt(dx*dx + dy*dy);
+                if (len > maxMemberLength) maxMemberLength = len;
+            }
+        }
+
+        // Event listeners
         modeRadios.forEach(radio => {
             radio.addEventListener('change', () => {
                 if (radio.checked) {
@@ -314,19 +295,16 @@
                 }
             });
         });
-
         memberTypeRadios.forEach(radio => {
             radio.addEventListener('change', () => {
                 if (radio.checked) config.memberType = radio.value;
             });
         });
-
         supportTypeRadios.forEach(radio => {
             radio.addEventListener('change', () => {
                 if (radio.checked) config.supportType = radio.value;
             });
         });
-
         loadTypeRadios.forEach(radio => {
             radio.addEventListener('change', () => {
                 if (radio.checked) {
@@ -335,7 +313,6 @@
                 }
             });
         });
-
         loadDirRadios.forEach(radio => {
             radio.addEventListener('change', () => {
                 if (radio.checked) config.loadDir = radio.value;
@@ -345,11 +322,9 @@
         loadValueInput.addEventListener('change', () => {
             config.loadValue = parseFloat(loadValueInput.value) || -1000;
         });
-
         nuStartValInput.addEventListener('change', () => {
             config.nuStartVal = parseFloat(nuStartValInput.value) || -1000;
         });
-
         nuEndValInput.addEventListener('change', () => {
             config.nuEndVal = parseFloat(nuEndValInput.value) || -500;
         });
@@ -358,11 +333,10 @@
             config.isSnap = isSnapCheckbox.checked;
             draw();
         });
-
         gridSpacingSelect.addEventListener('change', () => {
-            const value = parseFloat(gridSpacingSelect.value);
-            if (!isNaN(value) && value > 0) {
-                config.gridSpacing = value;
+            const val = parseFloat(gridSpacingSelect.value);
+            if (!isNaN(val) && val > 0) {
+                config.gridSpacing = val;
                 draw();
             }
         });
@@ -371,267 +345,224 @@
         clearBtn.addEventListener('click', handleClear);
         saveBtn.addEventListener('click', handleSave);
 
-        // Canvas click handler
+        // Canvas interactions
         canvas.addEventListener('click', (e) => {
             const rect = canvas.getBoundingClientRect();
-            let x = e.clientX - rect.left;
-            let y = e.clientY - rect.top;
+            const pixelX = e.clientX - rect.left;
+            const pixelY = e.clientY - rect.top;
             
-            // Snap coordinates only if snap is enabled
-            if (config.isSnap) {
-                x = snapCoord(x);
-                y = snapCoord(y, true);
-            }
-            
-            handleCanvasClick(x, y);
+            handleCanvasClick(pixelX, pixelY);
         });
-        
-        // Track mouse movement for coordinates display
+
         canvas.addEventListener('mousemove', (e) => {
             const rect = canvas.getBoundingClientRect();
             cursorX = e.clientX - rect.left;
             cursorY = e.clientY - rect.top;
-            
-            // Show snapped position in display if snap is enabled
-            if (config.isSnap) {
-                snappedX = snapCoord(cursorX);
-                snappedY = snapCoord(cursorY, true);
-            } else {
-                snappedX = cursorX;
-                snappedY = cursorY;
-            }
-            
-            draw(); // Redraw to update coordinate display
+            draw(); // to update the coordinate display
         });
 
-
-        // Initialize visibility
-        updateOptionsVisibility();
-
-        // Helper Functions
-        function pushHistory() {
-            const snapshot = JSON.parse(JSON.stringify(model));
-            history.push(snapshot);
-            if (history.length > maxHistory) history.shift();
+        // Convert screen coords → model coords (meters)
+        function screenToModel(sx, sy) {
+            const mx = (sx - config.originX) / config.scaleFactor;
+            const my = (config.originY - sy) / config.scaleFactor; // invert y
+            return {x: mx, y: my};
         }
 
-        function popHistory() {
-            if (history.length === 0) {
-                console.log("Nothing to undo");
-                return;
-            }
-            const last = history.pop();
-            Object.assign(model, last);
-            tempSelectedNode = null;
-            updateMaxMemberLength();
-            updateModelStats();
-            draw();
+        // Convert model coords (meters) → screen coords
+        function modelToScreen(mx, my) {
+            const sx = config.originX + mx * config.scaleFactor;
+            const sy = config.originY - my * config.scaleFactor;
+            return {x: sx, y: sy};
         }
 
-        // Convert from screen coordinates to model coordinates (meters)
-        function screenToModel(screenX, screenY) {
-            return {
-                x: (screenX - config.originX) / config.scaleFactor,
-                y: (config.originY - screenY) / config.scaleFactor // Y inverted for screen coordinates
-            };
-        }
-        
-        // Convert from model coordinates (meters) to screen coordinates
-        function modelToScreen(modelX, modelY) {
-            return {
-                x: config.originX + modelX * config.scaleFactor,
-                y: config.originY - modelY * config.scaleFactor // Y inverted for screen coordinates
-            };
-        }
-        
-        function snapCoord(screenVal, isY = false) {
-            if (!config.isSnap) return screenVal;
-            
-            // Convert to model coordinates
-            let modelVal;
-            if (isY) {
-                modelVal = (config.originY - screenVal) / config.scaleFactor;
-            } else {
-                modelVal = (screenVal - config.originX) / config.scaleFactor;
-            }
-            
-            // Snap in model space to exact grid points
-            const snappedModelVal = Math.round(modelVal / config.gridSpacing) * config.gridSpacing;
-            
-            // Convert back to screen coordinates
-            if (isY) {
-                return config.originY - snappedModelVal * config.scaleFactor;
-            } else {
-                return config.originX + snappedModelVal * config.scaleFactor;
-            }
+        // Snap a model coordinate to the nearest grid step
+        function snapInModelSpace(coord) {
+            return Math.round(coord / config.gridSpacing) * config.gridSpacing;
         }
 
-        function findClosestNode(x, y, tolerance = 10) {
-            let closest = null;
+        // Returns the ID of the closest node (in model space) within 'tolerance' (in screen px)
+        function findClosestNode(mX, mY, tolerancePx=10) {
+            let closestId = null;
             let minDist = Infinity;
             for (const nid in model.nodes) {
                 const nd = model.nodes[nid];
-                const dx = nd.x - x;
-                const dy = nd.y - y;
-                const d2 = dx*dx + dy*dy;
-                if (d2 < minDist) {
-                    minDist = d2;
-                    closest = nid;
+                const dx = nd.x - mX;
+                const dy = nd.y - mY;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                // Convert that distance to screen space to compare with tolerance
+                const {x: s1, y: s2} = modelToScreen(nd.x, nd.y);
+                const {x: s3, y: s4} = modelToScreen(mX, mY);
+                const screenDist = Math.sqrt((s1 - s3)**2 + (s2 - s4)**2);
+                if (screenDist < minDist) {
+                    minDist = screenDist;
+                    closestId = nid;
                 }
             }
-            if (Math.sqrt(minDist) < tolerance) return closest;
+            if (minDist <= tolerancePx) return closestId;
             return null;
         }
 
-        function pointToLineDist(px, py, x1, y1, x2, y2) {
+        // Returns the ID of the closest member within 'tolerance' in screen px
+        function findClosestMember(mX, mY, tolerancePx=10) {
+            let closestId = null;
+            let minDist = Infinity;
+            // For each member, measure the distance from the point to the line segment
+            for (const mid in model.members) {
+                const mem = model.members[mid];
+                const startN = model.nodes[mem.startNode];
+                const endN = model.nodes[mem.endNode];
+                if (!startN || !endN) continue;
+                // First convert the test point and the endpoints to screen
+                const sPt = modelToScreen(mX, mY);
+                const sA = modelToScreen(startN.x, startN.y);
+                const sB = modelToScreen(endN.x, endN.y);
+
+                const distScreen = pointToSegmentDist(sPt.x, sPt.y, sA.x, sA.y, sB.x, sB.y);
+                if (distScreen < minDist) {
+                    minDist = distScreen;
+                    closestId = mid;
+                }
+            }
+            return (minDist <= tolerancePx) ? closestId : null;
+        }
+
+        // distance from point(px,py) to line segment (x1,y1)-(x2,y2)
+        function pointToSegmentDist(px, py, x1, y1, x2, y2) {
             const dx = x2 - x1;
             const dy = y2 - y1;
             const len2 = dx*dx + dy*dy;
             if (len2 === 0) {
                 // segment is a point
-                const dx2 = px - x1;
-                const dy2 = py - y1;
-                return Math.sqrt(dx2*dx2 + dy2*dy2);
+                return Math.hypot(px - x1, py - y1);
             }
-            let t = ((px - x1)*dx + (py - y1)*dy)/len2;
+            let t = ((px - x1)*dx + (py - y1)*dy) / len2;
             t = Math.max(0, Math.min(1, t));
             const cx = x1 + t*dx;
             const cy = y1 + t*dy;
-            const dx3 = px - cx;
-            const dy3 = py - cy;
-            return Math.sqrt(dx3*dx3 + dy3*dy3);
+            return Math.hypot(px - cx, py - cy);
         }
 
-        function findClosestMember(x, y, tolerance=10) {
-            let closest = null;
-            let minDist = Infinity;
-            for (const mid in model.members) {
-                const mem = model.members[mid];
-                const sn = mem.startNode;
-                const en = mem.endNode;
-                if (!model.nodes[sn] || !model.nodes[en]) continue;
-                const { x: sx, y: sy } = model.nodes[sn];
-                const { x: ex, y: ey } = model.nodes[en];
-                const d = pointToLineDist(x, y, sx, sy, ex, ey);
-                if (d < minDist) {
-                    minDist = d;
-                    closest = mid;
-                }
+        function handleCanvasClick(px, py) {
+            // Convert screen to model
+            let mc = screenToModel(px, py);
+            if (config.isSnap) {
+                mc.x = snapInModelSpace(mc.x);
+                mc.y = snapInModelSpace(mc.y);
             }
-            if (minDist < tolerance) return closest;
-            return null;
-        }
-
-        function updateModelStats() {
-            modelStats.innerHTML = `
-                Nodes: ${Object.keys(model.nodes).length}<br>
-                Members: ${Object.keys(model.members).length}<br>
-                Supports: ${Object.keys(model.supports).length}<br>
-                Loads: ${Object.keys(model.loads).length}
-            `;
-        }
-
-        // Main click handler
-        function handleCanvasClick(x, y) {
-            x = snapCoord(x);
-            y = snapCoord(y);
 
             if (config.mode === "node") {
-                // add node
+                // Create a new node in model space
                 pushHistory();
-                const newNodeId = "N" + (model.nodeCounter+1);
-                model.nodeCounter++;
-                model.nodes[newNodeId] = { x, y };
+                const newNodeId = "N" + (++model.nodeCounter);
+                model.nodes[newNodeId] = { x: mc.x, y: mc.y };
             }
             else if (config.mode === "member") {
-                // find closest node
-                const nid = findClosestNode(x, y);
-                if (!nid) {
-                    console.log("No node near click (member).");
-                    return;
-                }
+                const closest = findClosestNode(mc.x, mc.y);
+                if (!closest) return;
                 if (!tempSelectedNode) {
-                    tempSelectedNode = nid;
+                    tempSelectedNode = closest;
                 } else {
-                    if (nid !== tempSelectedNode) {
-                        // create member
-                        pushHistory();
-                        const newMemId = "M" + (model.memberCounter+1);
-                        model.memberCounter++;
-                        model.members[newMemId] = {
-                            startNode: tempSelectedNode,
-                            endNode: nid,
-                            type: config.memberType
-                        };
-                        updateMaxMemberLength(); // Update max member length
+                    if (closest !== tempSelectedNode) {
+                        // Check for duplicates
+                        const startN = tempSelectedNode;
+                        const endN = closest;
+                        let duplicate = false;
+                        for (const mid in model.members) {
+                            const existing = model.members[mid];
+                            const s = existing.startNode;
+                            const e = existing.endNode;
+                            if (
+                                (s === startN && e === endN) ||
+                                (s === endN && e === startN)
+                            ) {
+                                duplicate = true;
+                                break;
+                            }
+                        }
+                        if (!duplicate) {
+                            pushHistory();
+                            const memId = "M" + (++model.memberCounter);
+                            model.members[memId] = {
+                                startNode: startN,
+                                endNode: endN,
+                                type: config.memberType
+                            };
+                            updateMaxMemberLength();
+                        } else {
+                            console.log("Member with same start/end already exists.");
+                        }
                     }
                     tempSelectedNode = null;
                 }
             }
             else if (config.mode === "support") {
-                // find node
-                const nid = findClosestNode(x, y);
-                if (!nid) return;
+                const closest = findClosestNode(mc.x, mc.y);
+                if (!closest) return;
                 pushHistory();
-                model.supports[nid] = { type: config.supportType };
+                model.supports[closest] = { type: config.supportType };
             }
             else if (config.mode === "load") {
                 if (config.loadType === "point") {
-                    // find node
-                    const nid = findClosestNode(x, y);
-                    if (!nid) return;
+                    const closest = findClosestNode(mc.x, mc.y);
+                    if (!closest) return;
                     pushHistory();
-                    const newLid = "L" + (model.loadCounter+1);
-                    let vals = [0,0];
-                    if (config.loadDir === "x") vals = [config.loadValue, 0];
-                    else vals = [0, config.loadValue];
-                    model.loadCounter++;
-                    model.loads[newLid] = {
-                        type: "point",
-                        node: nid,
-                        values: vals
-                    };
+                    const lid = "L" + (++model.loadCounter);
+                    if (config.loadDir === "x") {
+                        model.loads[lid] = {
+                            type: "point",
+                            node: closest,
+                            values: [config.loadValue, 0]
+                        };
+                    } else {
+                        model.loads[lid] = {
+                            type: "point",
+                            node: closest,
+                            values: [0, config.loadValue]
+                        };
+                    }
                 }
                 else if (config.loadType === "uniform" || config.loadType === "nonuniform") {
-                    // find member
-                    const mid = findClosestMember(x, y);
+                    const mid = findClosestMember(mc.x, mc.y);
                     if (!mid) return;
-                    // if member is truss => skip distributed
+                    // no distributed load on truss
                     if (model.members[mid].type === "truss") {
                         console.log("Cannot assign distributed load on truss.");
                         return;
                     }
                     pushHistory();
-                    const newLid = "L" + (model.loadCounter+1);
-                    model.loadCounter++;
+                    const lid = "L" + (++model.loadCounter);
+                    
                     if (config.loadType === "uniform") {
-                        let vals = [0,0];
-                        if (config.loadDir === "x") vals = [config.loadValue, 0];
-                        else vals = [0, config.loadValue];
-                        model.loads[newLid] = {
-                            type: "uniform",
-                            member: mid,
-                            values: vals,
-                            span: [0,1]
-                        };
+                        if (config.loadDir === "x") {
+                            model.loads[lid] = {
+                                type: "uniform",
+                                member: mid,
+                                values: [config.loadValue, 0]
+                            };
+                        } else {
+                            model.loads[lid] = {
+                                type: "uniform",
+                                member: mid,
+                                values: [0, config.loadValue]
+                            };
+                        }
                     } else {
-                        model.loads[newLid] = {
+                        // nonuniform
+                        model.loads[lid] = {
                             type: "nonuniform",
                             member: mid,
                             start_val: config.nuStartVal,
                             end_val: config.nuEndVal,
-                            span: [0,1],
                             dir: config.loadDir
                         };
                     }
                 }
             }
-            
+
             updateModelStats();
             draw();
         }
 
-        // Action Functions
         function handleUndo() {
             popHistory();
         }
@@ -652,6 +583,8 @@
         }
 
         function handleSave() {
+            // Output in meters, with the actual signed loads
+            // Model is already in meters, so just export
             const exportData = {
                 nodes: model.nodes,
                 members: model.members,
@@ -668,567 +601,486 @@
             URL.revokeObjectURL(url);
         }
 
-        // Drawing Functions
+        // History
+        function pushHistory() {
+            const snapshot = JSON.parse(JSON.stringify(model));
+            history.push(snapshot);
+            if (history.length > maxHistory) history.shift();
+        }
+        function popHistory() {
+            if (history.length === 0) {
+                console.log("Nothing to undo.");
+                return;
+            }
+            const last = history.pop();
+            Object.assign(model, last);
+            tempSelectedNode = null;
+            updateMaxMemberLength();
+            updateModelStats();
+            draw();
+        }
+
+        function updateModelStats() {
+            modelStats.innerHTML = `
+                Nodes: ${Object.keys(model.nodes).length}<br>
+                Members: ${Object.keys(model.members).length}<br>
+                Supports: ${Object.keys(model.supports).length}<br>
+                Loads: ${Object.keys(model.loads).length}
+            `;
+        }
+
+        // Drawing
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Draw grid
             if (config.isSnap) {
                 drawGrid();
             }
-            
-            // Draw members
             drawMembers();
-            
-            // Draw nodes
             drawNodes();
-            
-            // Draw supports
             drawSupports();
-            
-            // Draw loads
             drawLoads();
             
-            // Draw temp selection for member creation
             if (tempSelectedNode && config.mode === "member") {
+                // highlight selected node
                 const nd = model.nodes[tempSelectedNode];
                 if (nd) {
+                    const {x: sx, y: sy} = modelToScreen(nd.x, nd.y);
                     ctx.beginPath();
+                    ctx.setLineDash([5,5]);
                     ctx.strokeStyle = "orange";
                     ctx.lineWidth = 2;
-                    ctx.setLineDash([5, 5]);
-                    ctx.arc(nd.x, nd.y, 8, 0, Math.PI * 2);
+                    ctx.arc(sx, sy, 8, 0, Math.PI*2);
                     ctx.stroke();
                     ctx.setLineDash([]);
                 }
             }
-            
-            // Draw cursor coordinates in bottom right
             drawCursorCoordinates();
         }
-        
-        // Draw cursor coordinates
+
         function drawCursorCoordinates() {
-            const padding = 10;
-            const boxHeight = 20;
-            
-            // Convert screen coordinates to model coordinates (meters)
-            const modelCoords = screenToModel(snappedX, snappedY);
-            const modelX = modelCoords.x.toFixed(2);
-            const modelY = modelCoords.y.toFixed(2);
-            
-            const coords = `(${modelX}m, ${modelY}m)`;
+            // Show the model-space coordinates of the current mouse position
+            const mc = screenToModel(cursorX, cursorY);
             
             ctx.font = "12px Arial";
-            const textWidth = ctx.measureText(coords).width;
-            
-            // Draw background
-            ctx.fillStyle = "rgba(0,0,0,0.7)";
-            ctx.fillRect(
-                canvas.width - textWidth - padding * 2,
-                canvas.height - boxHeight - padding,
-                textWidth + padding * 2,
-                boxHeight
-            );
-            
-            // Draw text
+            const text = `(${mc.x.toFixed(2)}m, ${mc.y.toFixed(2)}m)`;
+            const pad = 10;
+            const textWidth = ctx.measureText(text).width;
+            const boxHeight = 20;
+
+            ctx.fillStyle = "rgba(0,0,0,0.6)";
+            ctx.fillRect(canvas.width - textWidth - pad*2, canvas.height - boxHeight - pad, textWidth + pad*2, boxHeight);
             ctx.fillStyle = "white";
             ctx.textAlign = "center";
-            ctx.fillText(
-                coords,
-                canvas.width - textWidth/2 - padding,
-                canvas.height - padding - 4
-            );
-            ctx.textAlign = "left"; // Reset to default
+            ctx.fillText(text, canvas.width - textWidth/2 - pad, canvas.height - pad - 5);
+            ctx.textAlign = "left";
         }
 
         function drawGrid() {
             ctx.save();
-            
-            // Calculate model coordinates of the visible area corners
+            // figure out the model-space bounding box of the screen
             const topLeft = screenToModel(0, 0);
             const bottomRight = screenToModel(canvas.width, canvas.height);
-            
-            // Calculate grid line ranges
+
+            // major/minor lines
             const xStart = Math.floor(topLeft.x / config.gridSpacing) * config.gridSpacing;
-            const xEnd = Math.ceil(bottomRight.x / config.gridSpacing) * config.gridSpacing;
-            const yStart = Math.floor(bottomRight.y / config.gridSpacing) * config.gridSpacing; // Bottom of screen
-            const yEnd = Math.ceil(topLeft.y / config.gridSpacing) * config.gridSpacing; // Top of screen
-            
-            // Draw minor grid lines (lighter)
+            const xEnd   = Math.ceil(bottomRight.x / config.gridSpacing) * config.gridSpacing;
+            const yStart = Math.floor(bottomRight.y / config.gridSpacing) * config.gridSpacing;
+            const yEnd   = Math.ceil(topLeft.y / config.gridSpacing) * config.gridSpacing;
+
             ctx.strokeStyle = "#e0e0e0";
             ctx.lineWidth = 0.5;
-            
-            // Draw minor vertical grid lines
+
+            // minor lines
             for (let x = xStart; x <= xEnd; x += config.gridSpacing) {
-                const screenX = modelToScreen(x, 0).x;
+                const sA = modelToScreen(x, 0);
                 ctx.beginPath();
-                ctx.moveTo(screenX, 0);
-                ctx.lineTo(screenX, canvas.height);
+                ctx.moveTo(sA.x, 0);
+                ctx.lineTo(sA.x, canvas.height);
                 ctx.stroke();
             }
-            
-            // Draw minor horizontal grid lines
             for (let y = yStart; y <= yEnd; y += config.gridSpacing) {
-                const screenY = modelToScreen(0, y).y;
+                const sA = modelToScreen(0, y);
                 ctx.beginPath();
-                ctx.moveTo(0, screenY);
-                ctx.lineTo(canvas.width, screenY);
+                ctx.moveTo(0, sA.y);
+                ctx.lineTo(canvas.width, sA.y);
                 ctx.stroke();
             }
-            
-            // Draw major grid lines (every 5 units, darker)
-            const majorSpacing = Math.max(5 * config.gridSpacing, 1);
+
+            // major lines every 5 grid steps
+            const major = 5 * config.gridSpacing;
             ctx.strokeStyle = "#d0d0d0";
             ctx.lineWidth = 0.8;
-            
-            // Draw major vertical grid lines
-            for (let x = Math.floor(xStart / majorSpacing) * majorSpacing; x <= xEnd; x += majorSpacing) {
-                const screenX = modelToScreen(x, 0).x;
+
+            for (let x = Math.floor(xStart / major)*major; x <= xEnd; x += major) {
+                const sA = modelToScreen(x,0);
                 ctx.beginPath();
-                ctx.moveTo(screenX, 0);
-                ctx.lineTo(screenX, canvas.height);
+                ctx.moveTo(sA.x, 0);
+                ctx.lineTo(sA.x, canvas.height);
                 ctx.stroke();
             }
-            
-            // Draw major horizontal grid lines
-            for (let y = Math.floor(yStart / majorSpacing) * majorSpacing; y <= yEnd; y += majorSpacing) {
-                const screenY = modelToScreen(0, y).y;
+            for (let y = Math.floor(yStart / major)*major; y <= yEnd; y += major) {
+                const sA = modelToScreen(0,y);
                 ctx.beginPath();
-                ctx.moveTo(0, screenY);
-                ctx.lineTo(canvas.width, screenY);
+                ctx.moveTo(0, sA.y);
+                ctx.lineTo(canvas.width, sA.y);
                 ctx.stroke();
             }
-            
-            // Draw axis lines (thickest)
+
+            // axes
             ctx.strokeStyle = "#666";
             ctx.lineWidth = 1.5;
-            
-            // X-axis
+            // x-axis
+            const sOriX1 = modelToScreen(0,0);
             ctx.beginPath();
-            ctx.moveTo(0, config.originY);
-            ctx.lineTo(canvas.width, config.originY);
+            ctx.moveTo(0, sOriX1.y);
+            ctx.lineTo(canvas.width, sOriX1.y);
             ctx.stroke();
-            
-            // Y-axis
+            // y-axis
             ctx.beginPath();
-            ctx.moveTo(config.originX, 0);
-            ctx.lineTo(config.originX, canvas.height);
+            ctx.moveTo(sOriX1.x, 0);
+            ctx.lineTo(sOriX1.x, canvas.height);
             ctx.stroke();
-            
-            // Draw grid labels
-            ctx.font = "12px Arial";
-            
-            // Draw X-axis labels
-            for (let x = xStart; x <= xEnd; x += config.gridSpacing) {
-                if (Math.abs(x) < 0.001) continue; // Skip origin
-                
-                const screenX = modelToScreen(x, 0).x;
-                
-                // Major labels (larger, darker)
-                if (Math.abs(x % majorSpacing) < 0.001) {
-                    ctx.fillStyle = "#222";
-                    ctx.textAlign = "center";
-                    ctx.fillText(`${x.toFixed(0)}m`, screenX, config.originY + 20);
-                }
-                // Minor labels (smaller, lighter)
-                else if (config.gridSpacing >= 0.5) { // Only show minor labels if grid is not too dense
-                    ctx.fillStyle = "#777";
-                    ctx.textAlign = "center";
-                    ctx.font = "10px Arial";
-                    ctx.fillText(`${x.toFixed(1)}`, screenX, config.originY + 15);
-                }
-            }
-            
-            // Draw Y-axis labels
-            for (let y = yStart; y <= yEnd; y += config.gridSpacing) {
-                if (Math.abs(y) < 0.001) continue; // Skip origin
-                
-                const screenY = modelToScreen(0, y).y;
-                
-                // Major labels (larger, darker)
-                if (Math.abs(y % majorSpacing) < 0.001) {
-                    ctx.fillStyle = "#222";
-                    ctx.textAlign = "right";
-                    ctx.fillText(`${y.toFixed(0)}m`, config.originX - 10, screenY + 4);
-                }
-                // Minor labels (smaller, lighter)
-                else if (config.gridSpacing >= 0.5) { // Only show minor labels if grid is not too dense
-                    ctx.fillStyle = "#777";
-                    ctx.textAlign = "right";
-                    ctx.font = "10px Arial";
-                    ctx.fillText(`${y.toFixed(1)}`, config.originX - 5, screenY + 3);
-                }
-            }
-            
-            // Draw origin label
-            ctx.fillStyle = "#000";
-            ctx.font = "bold 12px Arial";
-            ctx.textAlign = "left";
-            ctx.fillText("(0,0)", config.originX + 5, config.originY - 5);
-            
-            // Draw grid spacing indicator in top-left
-            ctx.fillStyle = "rgba(0,0,0,0.6)";
-            ctx.fillRect(10, 10, 160, 30);
-            ctx.fillStyle = "white";
-            ctx.font = "14px Arial";
-            ctx.textAlign = "left";
-            ctx.fillText(`Grid Spacing: ${config.gridSpacing}m`, 20, 30);
-            
-            // Draw X and Y axis labels
-            ctx.fillStyle = "#333";
+
+            // axis labels
             ctx.font = "bold 14px Arial";
-            
-            // X-axis label
+            ctx.fillStyle = "#333";
+            // X
             ctx.textAlign = "center";
-            ctx.fillText("X (m)", canvas.width / 2, config.originY + 40);
-            
-            // Y-axis label (rotated)
+            ctx.fillText("X (m)", canvas.width / 2, sOriX1.y + 30);
+            // Y
             ctx.save();
-            ctx.translate(config.originX - 40, canvas.height / 2);
-            ctx.rotate(-Math.PI / 2);
+            ctx.translate(sOriX1.x - 30, canvas.height / 2);
+            ctx.rotate(-Math.PI/2);
             ctx.fillText("Y (m)", 0, 0);
             ctx.restore();
-            
+
+            // origin label
+            ctx.font = "bold 12px Arial";
+            ctx.fillStyle = "#000";
+            ctx.textAlign = "left";
+            ctx.fillText("(0,0)", sOriX1.x+5, sOriX1.y-5);
+
+            // top-left label for grid spacing
+            ctx.fillStyle = "rgba(0,0,0,0.6)";
+            ctx.fillRect(10,10,180,30);
+            ctx.fillStyle = "#fff";
+            ctx.textAlign = "left";
+            ctx.fillText(`Grid Spacing: ${config.gridSpacing}m`, 20,30);
+
             ctx.restore();
         }
 
         function drawNodes() {
             for (const nid in model.nodes) {
                 const nd = model.nodes[nid];
-                
-                // Draw node circle
+                const sc = modelToScreen(nd.x, nd.y);
                 ctx.beginPath();
                 ctx.fillStyle = "#1a75ff";
                 ctx.strokeStyle = "black";
                 ctx.lineWidth = 1.5;
-                ctx.arc(nd.x, nd.y, 6, 0, Math.PI * 2);
+                ctx.arc(sc.x, sc.y, 6, 0, Math.PI*2);
                 ctx.fill();
                 ctx.stroke();
-                
-                // Draw node label
+
+                // label
                 ctx.font = "14px Arial";
                 ctx.fillStyle = "black";
-                ctx.fillText(nid, nd.x + 8, nd.y + 8);
+                ctx.fillText(nid, sc.x+8, sc.y+8);
             }
         }
 
         function drawMembers() {
             for (const mid in model.members) {
                 const mem = model.members[mid];
-                const sn = mem.startNode;
-                const en = mem.endNode;
-                if (!model.nodes[sn] || !model.nodes[en]) continue;
-                
-                const { x: sx, y: sy } = model.nodes[sn];
-                const { x: ex, y: ey } = model.nodes[en];
+                const sn = model.nodes[mem.startNode];
+                const en = model.nodes[mem.endNode];
+                if (!sn || !en) continue;
+                const start = modelToScreen(sn.x, sn.y);
+                const end = modelToScreen(en.x, en.y);
+
                 const color = (mem.type === "beam") ? "#006633" : "blue";
-                
-                // Draw member line
                 ctx.beginPath();
                 ctx.strokeStyle = color;
                 ctx.lineWidth = 3;
-                ctx.moveTo(sx, sy);
-                ctx.lineTo(ex, ey);
+                ctx.moveTo(start.x, start.y);
+                ctx.lineTo(end.x, end.y);
                 ctx.stroke();
-                
-                    // Draw member label at midpoint
-                const mx = (sx + ex) / 2;
-                const my = (sy + ey) / 2;
-                
-                ctx.font = "12px Arial";
-                ctx.fillStyle = "#000";
-                // Add a small white background for better readability
-                const textWidth = ctx.measureText(mid).width;
+
+                // label at midpoint
+                const mx = (start.x + end.x)/2;
+                const my = (start.y + end.y)/2;
+                const txt = mid;
+                const w = ctx.measureText(txt).width;
                 ctx.fillStyle = "rgba(255,255,255,0.7)";
-                ctx.fillRect(mx - textWidth/2 - 2, my - 8, textWidth + 4, 16);
-                
+                ctx.fillRect(mx - w/2 - 2, my - 8, w+4, 16);
                 ctx.fillStyle = "#000";
+                ctx.font = "12px Arial";
                 ctx.textAlign = "center";
-                ctx.fillText(mid, mx, my);
-                ctx.textAlign = "left"; // Reset to default
+                ctx.fillText(mid, mx, my+2);
+                ctx.textAlign = "left";
             }
         }
 
         function drawSupports() {
-            // Calculate the support size based on max member length
-            // Support size will be 1/5 of max member length or a minimum size
-            const supportSize = Math.max(20, maxMemberLength / 5);
-            
+            // support size = 1/8 of maxMemberLength
+            const s = (maxMemberLength > 0) ? Math.max(0.5, maxMemberLength/9) : 10; 
+            // s is in meters, convert to screen
+            const supportPix = s * config.scaleFactor;
+
             for (const node_id in model.supports) {
-                if (!model.nodes[node_id]) continue;
-                
-                const st = model.supports[node_id].type;
-                const { x, y } = model.nodes[node_id];
-                const fill = "purple";
-                
-                switch(st) {
+                const sup = model.supports[node_id];
+                const nd = model.nodes[node_id];
+                if (!nd) continue;
+                const sc = modelToScreen(nd.x, nd.y);
+                ctx.save();
+                ctx.translate(sc.x, sc.y);
+                ctx.fillStyle = "purple";
+                switch(sup.type) {
                     case "fixed":
-                        // Draw hatched gray square
-                        const squareSize = supportSize;
+                        // draw a small square with hatching
+                        ctx.save();
                         ctx.fillStyle = "#888";
-                        ctx.fillRect(x - squareSize/2, y - squareSize/2, squareSize, squareSize);
-                        
-                        // Add hatching pattern
+                        ctx.fillRect(-supportPix/2, -supportPix/2, supportPix, supportPix);
+                        // hatching
                         ctx.strokeStyle = "#444";
                         ctx.lineWidth = 1;
-                        
-                        // Horizontal hatching
-                        const hatchSpacing = squareSize / 8;
-                        for (let i = -squareSize/2; i <= squareSize/2; i += hatchSpacing) {
+                        const hatchSpacing = supportPix/8;
+                        for (let i = 0; i <= supportPix; i += hatchSpacing) {
+                            // horizontal line
                             ctx.beginPath();
-                            ctx.moveTo(x - squareSize/2, y + i);
-                            ctx.lineTo(x + squareSize/2, y + i);
+                            ctx.moveTo(-supportPix/2, -supportPix/2 + i);
+                            ctx.lineTo(supportPix/2, -supportPix/2 + i);
+                            ctx.stroke();
+                            // vertical line
+                            ctx.beginPath();
+                            ctx.moveTo(-supportPix/2 + i, -supportPix/2);
+                            ctx.lineTo(-supportPix/2 + i, supportPix/2);
                             ctx.stroke();
                         }
-                        
-                        // Vertical hatching
-                        for (let i = -squareSize/2; i <= squareSize/2; i += hatchSpacing) {
-                            ctx.beginPath();
-                            ctx.moveTo(x + i, y - squareSize/2);
-                            ctx.lineTo(x + i, y + squareSize/2);
-                            ctx.stroke();
-                        }
+                        ctx.restore();
                         break;
-                        
                     case "roller_x":
-                        // Large triangle pointing left
-                        ctx.fillStyle = fill;
+                        // left pointing triangle
                         ctx.beginPath();
-                        ctx.moveTo(x, y);
-                        ctx.lineTo(x-supportSize, y-supportSize/2);
-                        ctx.lineTo(x-supportSize, y+supportSize/2);
+                        ctx.moveTo(0, 0);
+                        ctx.lineTo(-supportPix, -supportPix/2);
+                        ctx.lineTo(-supportPix, supportPix/2);
                         ctx.closePath();
                         ctx.fill();
                         break;
-                        
                     case "roller_y":
-                        // Large triangle pointing up
-                        ctx.fillStyle = fill;
+                        // up pointing triangle
                         ctx.beginPath();
-                        ctx.moveTo(x, y);
-                        ctx.lineTo(x-supportSize/2, y-supportSize);
-                        ctx.lineTo(x+supportSize/2, y-supportSize);
+                        ctx.moveTo(0, 0);
+                        ctx.lineTo(-supportPix/2, supportPix);
+                        ctx.lineTo(supportPix/2, supportPix);
                         ctx.closePath();
                         ctx.fill();
                         break;
-                        
                     case "hinge":
-                        // Combine roller_x and roller_y
-                        ctx.fillStyle = fill;
-                        
-                        // Left-pointing triangle
+                        // combine roller_x + roller_y
                         ctx.beginPath();
-                        ctx.moveTo(x, y);
-                        ctx.lineTo(x-supportSize, y-supportSize/2);
-                        ctx.lineTo(x-supportSize, y+supportSize/2);
+                        ctx.moveTo(0, 0);
+                        ctx.lineTo(-supportPix, -supportPix/2);
+                        ctx.lineTo(-supportPix, supportPix/2);
                         ctx.closePath();
                         ctx.fill();
-                        
-                        // Up-pointing triangle
+
                         ctx.beginPath();
-                        ctx.moveTo(x, y);
-                        ctx.lineTo(x-supportSize/2, y-supportSize);
-                        ctx.lineTo(x+supportSize/2, y-supportSize);
+                        ctx.moveTo(0, 0);
+                        ctx.lineTo(-supportPix/2, supportPix);
+                        ctx.lineTo(supportPix/2, supportPix);
                         ctx.closePath();
                         ctx.fill();
                         break;
                 }
+                ctx.restore();
             }
         }
 
         function drawLoads() {
+            // For distributed loads, we will place 7 arrows at t=0, 1/6, 2/6, 3/6, 4/6, 5/6, 1
+            const distributedPositions = [0, 1/6, 2/6, 3/6, 4/6, 5/6, 1];
+
+            // Arrow size rules:
+            // 1. point & uniform => arrowLen = (1/5 of maxMemberLength in meters)
+            // 2. nonuniform => arrowLen in [1/7, 1/5] of maxMemberLength, scaled by magnitude
+            const arrowLenPointUniform = maxMemberLength * (1/5);
+            const arrowLenMinNonuniform = maxMemberLength * (1/7);
+            const arrowLenMaxNonuniform = maxMemberLength * (1/5);
+
             for (const lid in model.loads) {
                 const ld = model.loads[lid];
-                
                 if (ld.type === "point") {
-                    const { node, values } = ld;
-                    if (!model.nodes[node]) continue;
+                    const nd = model.nodes[ld.node];
+                    if (!nd) continue;
+                    const sc = modelToScreen(nd.x, nd.y);
+                    const fx = ld.values[0];
+                    const fy = ld.values[1];
                     
-                    const { x, y } = model.nodes[node];
-                    const [fx, fy] = values;
-                    
-                    // Arrow parameters
-                    const arrowLength = 40;
-                    let dx=0, dy=0;
-                    
-                    // X direction arrow (positive value, but direction based on sign)
-                    if (Math.abs(fx) > 0.01) {
-                        dx = Math.sign(fx) * arrowLength;
+                    // we interpret negative x => arrow left, negative y => arrow down, etc.
+                    // arrow length in meters:
+                    const arrLenM = arrowLenPointUniform;
+                    // convert to screen
+                    const arrLenPx = arrLenM * config.scaleFactor;
+
+                    let dx = 0, dy = 0;
+                    // x direction
+                    if (Math.abs(fx) > 1e-6) {
+                        dx = (fx < 0) ? -arrLenPx : arrLenPx;
                     }
-                    
-                    // Y direction arrow (positive value, but direction based on sign)
-                    if (Math.abs(fy) > 0.01) {
-                        dy = Math.sign(fy) * arrowLength;
+                    // y direction
+                    if (Math.abs(fy) > 1e-6) {
+                        // if negative => arrow is downward on screen
+                        dy = (fy < 0) ? arrLenPx : -arrLenPx; 
+                        // (remember screen Y is inverted, so negative means up)
                     }
-                    
-                    const startX = x - dx;
-                    const startY = y - dy;
-                    const color = "red";
-                    
-                    // Draw arrow
-                    drawArrow(startX, startY, x, y, color);
-                    
-                    // Draw label with positive values and units
+                    const startX = sc.x - dx;
+                    const startY = sc.y - dy;
+
+                    drawArrow(startX, startY, sc.x, sc.y, "red");
+                    // label
                     ctx.font = "12px Arial";
-                    ctx.fillStyle = color;
-                    
+                    ctx.fillStyle = "red";
+                    // show abs value
                     let label = "";
-                    if (Math.abs(fx) > 0.01 && Math.abs(fy) > 0.01) {
-                        // Both X and Y loads
+                    if (Math.abs(fx) > 1e-6 && Math.abs(fy) > 1e-6) {
                         label = `${Math.abs(fx)}N, ${Math.abs(fy)}N`;
-                    } else if (Math.abs(fx) > 0.01) {
-                        // Only X load
+                    } else if (Math.abs(fx) > 1e-6) {
                         label = `${Math.abs(fx)}N`;
-                    } else if (Math.abs(fy) > 0.01) {
-                        // Only Y load
+                    } else if (Math.abs(fy) > 1e-6) {
                         label = `${Math.abs(fy)}N`;
                     }
-                    
-                    ctx.fillText(label, startX, startY - 5);
+                    ctx.fillText(label, startX, startY);
                 }
-                else if (ld.type === "uniform" || ld.type === "nonuniform") {
-                    const memId = ld.member;
-                    if (!model.members[memId]) continue;
-                    if (model.members[memId].type === "truss") continue;
-                    
-                    const sn = model.members[memId].startNode;
-                    const en = model.members[memId].endNode;
-                    if (!model.nodes[sn] || !model.nodes[en]) continue;
-                    
-                    const { x: sx, y: sy } = model.nodes[sn];
-                    const { x: ex, y: ey } = model.nodes[en];
-                    
-                    // Calculate member properties
-                    const dx = ex - sx;
-                    const dy = ey - sy;
-                    const length = Math.sqrt(dx*dx + dy*dy);
-                    const angle = Math.atan2(dy, dx);
-                    
-                    // Direction perpendicular to member
-                    const perpAngle = angle - Math.PI/2;
-                    
-                    if (ld.type === "uniform") {
-                        const [fx, fy] = ld.values || [0, 0];
-                        const color = "red";
+                else if (ld.type === "uniform") {
+                    const mem = model.members[ld.member];
+                    if (!mem || mem.type === "truss") continue;
+                    const sn = model.nodes[mem.startNode];
+                    const en = model.nodes[mem.endNode];
+                    if (!sn || !en) continue;
+                    const dxm = en.x - sn.x;
+                    const dym = en.y - sn.y;
+                    const length = Math.sqrt(dxm*dxm + dym*dym);
+                    const startS = modelToScreen(sn.x, sn.y);
+                    const endS = modelToScreen(en.x, en.y);
+
+                    // arrow length in px for uniform
+                    const arrLenPx = arrowLenPointUniform * config.scaleFactor;
+
+                    // The load vector (fx, fy)
+                    const fx = ld.values[0];
+                    const fy = ld.values[1];
+
+                    // 7 arrows at t=0..1 in steps of 1/6
+                    for (let i=0; i<distributedPositions.length; i++){
+                        const t = distributedPositions[i];
+                        // param in model coords
+                        const xM = sn.x + t*dxm;
+                        const yM = sn.y + t*dym;
+                        const sc = modelToScreen(xM, yM);
                         
-                        // Number of arrows for distributed load
-                        const numArrows = Math.max(3, Math.floor(length / 50));
-                        
-                        // Arrow size and direction
-                        const arrowLength = 20;
-                        let arrowDx = 0, arrowDy = 0;
-                        
-                        // Set direction based on sign, but label will show positive value
-                        if (Math.abs(fx) > 0.01) {
-                            arrowDx = Math.sign(fx) * arrowLength;
-                        } else if (Math.abs(fy) > 0.01) {
-                            arrowDy = Math.sign(fy) * arrowLength;
+                        let ax = 0, ay = 0;
+                        if (Math.abs(fx) > 1e-6) {
+                            ax = (fx < 0) ? -arrLenPx : arrLenPx;
                         }
-                        
-                        // Draw multiple arrows along the member
-                        for (let i = 0; i <= numArrows; i++) {
-                            const t = i / numArrows;
-                            const arrowX = sx + t * dx;
-                            const arrowY = sy + t * dy;
-                            
-                            // Start point for arrow
-                            const startX = arrowX - arrowDx;
-                            const startY = arrowY - arrowDy;
-                            
-                            // Draw arrow
-                            drawArrow(startX, startY, arrowX, arrowY, color);
+                        if (Math.abs(fy) > 1e-6) {
+                            ay = (fy < 0) ? arrLenPx : -arrLenPx;
                         }
-                        
-                        // Draw label at midpoint
-                        const mx = (sx + ex) / 2;
-                        const my = (sy + ey) / 2;
-                        const labelX = mx - arrowDx;
-                        const labelY = my - arrowDy - 5;
-                        
-                        // Show positive value with units
-                        let label = "";
-                        if (Math.abs(fx) > 0.01 && Math.abs(fy) > 0.01) {
-                            // Both X and Y loads
-                            label = `${Math.abs(fx)}N/m (x), ${Math.abs(fy)}N/m (y)`;
-                        } else if (Math.abs(fx) > 0.01) {
-                            // Only X load
-                            label = `${Math.abs(fx)}N/m`;
-                        } else if (Math.abs(fy) > 0.01) {
-                            // Only Y load
-                            label = `${Math.abs(fy)}N/m`;
-                        }
-                        
-                        ctx.font = "12px Arial";
-                        ctx.fillStyle = color;
-                        ctx.fillText(label, labelX, labelY);
-                    } else {
-                        // Nonuniform load
-                        const startVal = ld.start_val ?? -1000;
-                        const endVal = ld.end_val ?? -500;
-                        const dir = ld.dir || "y";
-                        const color = "red";
-                        
-                        // Number of arrows for distributed load
-                        const numArrows = Math.max(3, Math.floor(length / 50));
-                        
-                        // Draw multiple arrows along the member with varying sizes
-                        for (let i = 0; i <= numArrows; i++) {
-                            const t = i / numArrows;
-                            const arrowX = sx + t * dx;
-                            const arrowY = sy + t * dy;
-                            
-                            // Interpolate arrow length based on position
-                            const val = startVal + t * (endVal - startVal);
-                            const arrowLength = Math.max(10, Math.min(40, Math.abs(val) / 100));
-                            
-                            // Arrow direction based on sign, but value will be positive
-                            let arrowDx = 0, arrowDy = 0;
-                            if (dir === "x") {
-                                arrowDx = Math.sign(val) * arrowLength;
-                            } else {
-                                arrowDy = Math.sign(val) * arrowLength;
-                            }
-                            
-                            // Start point for arrow
-                            const startX = arrowX - arrowDx;
-                            const startY = arrowY - arrowDy;
-                            
-                            // Draw arrow
-                            drawArrow(startX, startY, arrowX, arrowY, color);
-                        }
-                        
-                        // Draw label at midpoint
-                        const mx = (sx + ex) / 2;
-                        const my = (sy + ey) / 2;
-                        
-                        // Show positive values with units
-                        ctx.font = "12px Arial";
-                        ctx.fillStyle = color;
-                        ctx.fillText(`[${Math.abs(startVal)}->${Math.abs(endVal)}]N/m`, mx, my - 15);
+                        drawArrow(sc.x - ax, sc.y - ay, sc.x, sc.y, "red");
                     }
+                    // label near midpoint
+                    const midX = sn.x + 0.5*dxm;
+                    const midY = sn.y - 0.5*dym;
+                    const midS = modelToScreen(midX, midY);
+                    ctx.font = "12px Arial";
+                    ctx.fillStyle = "red";
+                    let label = "";
+                    if (Math.abs(fx) > 1e-6 && Math.abs(fy) > 1e-6) {
+                        label = `${Math.abs(fx)}N/m, ${Math.abs(fy)}N/m`;
+                    } else if (Math.abs(fx) > 1e-6) {
+                        label = `${Math.abs(fx)}N/m`;
+                    } else if (Math.abs(fy) > 1e-6) {
+                        label = `${Math.abs(fy)}N/m`;
+                    }
+                    ctx.fillText(label, midS.x, midS.y + arrLenPx*Math.sign(fy));
+                }
+                else if (ld.type === "nonuniform") {
+                    const mem = model.members[ld.member];
+                    if (!mem || mem.type === "truss") continue;
+                    const sn = model.nodes[mem.startNode];
+                    const en = model.nodes[mem.endNode];
+                    if (!sn || !en) continue;
+                    const dxm = en.x - sn.x;
+                    const dym = en.y - sn.y;
+                    const length = Math.sqrt(dxm*dxm + dym*dym);
+
+                    // arrow length range
+                    const minPx = arrowLenMinNonuniform * config.scaleFactor;
+                    const maxPx = arrowLenMaxNonuniform * config.scaleFactor;
+
+                    const dir = ld.dir || "y";
+                    const startVal = ld.start_val ?? -1000;
+                    const endVal = ld.end_val ?? -500;
+
+                    // For 7 arrows
+                    for (let i=0; i<distributedPositions.length; i++){
+                        const t = distributedPositions[i];
+                        const valT = startVal + t*(endVal - startVal); // linear interpolation
+                        const absValT = Math.abs(valT);
+
+                        // figure out arrow length in px from min to max
+                        // We map [min(absStart,absEnd) -> max(absStart,absEnd)] onto [minPx -> maxPx]
+                        const absStart = Math.abs(startVal);
+                        const absEnd   = Math.abs(endVal);
+                        const dataMin = Math.min(absStart, absEnd);
+                        const dataMax = Math.max(absStart, absEnd);
+                        const range = Math.max(dataMax - dataMin, 1e-6); // avoid zero
+                        const fraction = (absValT - dataMin)/range; // in [0..1]
+                        let arrowPx = minPx + fraction*(maxPx - minPx);
+                        
+                        // Where to place the arrow
+                        const xM = sn.x + t*dxm;
+                        const yM = sn.y + t*dym;
+                        const sc = modelToScreen(xM, yM);
+
+                        // direction
+                        let ax = 0, ay = 0;
+                        if (dir === "x") {
+                            ax = (valT < 0) ? -arrowPx : arrowPx;
+                        } else {
+                            // negative => arrow downward in screen
+                            ay = (valT < 0) ? arrowPx : -arrowPx;
+                        }
+                        drawArrow(sc.x - ax, sc.y - ay, sc.x, sc.y, "red");
+                    }
+
+                    // label near midpoint
+                    const midX = sn.x + 0.5*dxm;
+                    const midY = sn.y + 0.5*dym;
+                    const midS = modelToScreen(midX, midY);
+                    ctx.font = "12px Arial";
+                    ctx.fillStyle = "red";
+                    ctx.fillText(`[${Math.abs(startVal)} -> ${Math.abs(endVal)}] N/m`, midS.x, midS.y + maxPx*Math.sign(startVal));
                 }
             }
         }
 
         function drawArrow(fromX, fromY, toX, toY, color) {
-            const headLength = 8;    // Length of arrow head
-            const headWidth = 8;     // Width of arrow head
-            
-            // Calculate arrow direction
+            const headLength = 8;
             const dx = toX - fromX;
             const dy = toY - fromY;
             const angle = Math.atan2(dy, dx);
-            
-            // Draw line
+
+            // line
             ctx.beginPath();
             ctx.strokeStyle = color;
             ctx.lineWidth = 2;
             ctx.moveTo(fromX, fromY);
             ctx.lineTo(toX, toY);
             ctx.stroke();
-            
-            // Draw arrowhead
+
+            // arrowhead
             ctx.beginPath();
             ctx.fillStyle = color;
             ctx.moveTo(toX, toY);
@@ -1244,7 +1096,9 @@
             ctx.fill();
         }
 
-        // Initial draw
+        // initial
+        updateOptionsVisibility();
+        updateModelStats();
         draw();
     </script>
 </body>
