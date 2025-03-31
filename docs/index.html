@@ -677,96 +677,134 @@
 
         function drawGrid() {
             ctx.save();
-            // figure out the model-space bounding box of the screen
+            
+            // Visible area corners (in model coords)
             const topLeft = screenToModel(0, 0);
             const bottomRight = screenToModel(canvas.width, canvas.height);
-
-            // major/minor lines
+            
+            // Grid line ranges
             const xStart = Math.floor(topLeft.x / config.gridSpacing) * config.gridSpacing;
-            const xEnd   = Math.ceil(bottomRight.x / config.gridSpacing) * config.gridSpacing;
-            const yStart = Math.floor(bottomRight.y / config.gridSpacing) * config.gridSpacing;
-            const yEnd   = Math.ceil(topLeft.y / config.gridSpacing) * config.gridSpacing;
-
+            const xEnd = Math.ceil(bottomRight.x / config.gridSpacing) * config.gridSpacing;
+            const yStart = Math.floor(bottomRight.y / config.gridSpacing) * config.gridSpacing; 
+            const yEnd = Math.ceil(topLeft.y / config.gridSpacing) * config.gridSpacing;
+            
             ctx.strokeStyle = "#e0e0e0";
             ctx.lineWidth = 0.5;
-
-            // minor lines
+            
+            // Vertical lines
             for (let x = xStart; x <= xEnd; x += config.gridSpacing) {
-                const sA = modelToScreen(x, 0);
+                const screenX = modelToScreen(x, 0).x;
                 ctx.beginPath();
-                ctx.moveTo(sA.x, 0);
-                ctx.lineTo(sA.x, canvas.height);
+                ctx.moveTo(screenX, 0);
+                ctx.lineTo(screenX, canvas.height);
                 ctx.stroke();
             }
+            
+            // Horizontal lines
             for (let y = yStart; y <= yEnd; y += config.gridSpacing) {
-                const sA = modelToScreen(0, y);
+                const screenY = modelToScreen(0, y).y;
                 ctx.beginPath();
-                ctx.moveTo(0, sA.y);
-                ctx.lineTo(canvas.width, sA.y);
+                ctx.moveTo(0, screenY);
+                ctx.lineTo(canvas.width, screenY);
                 ctx.stroke();
             }
-
-            // major lines every 5 grid steps
-            const major = 5 * config.gridSpacing;
+            
+            // Major lines
+            const majorSpacing = Math.max(5 * config.gridSpacing, 1);
             ctx.strokeStyle = "#d0d0d0";
             ctx.lineWidth = 0.8;
-
-            for (let x = Math.floor(xStart / major)*major; x <= xEnd; x += major) {
-                const sA = modelToScreen(x,0);
+            
+            // Major vertical
+            for (let x = Math.floor(xStart / majorSpacing) * majorSpacing; x <= xEnd; x += majorSpacing) {
+                const screenX = modelToScreen(x, 0).x;
                 ctx.beginPath();
-                ctx.moveTo(sA.x, 0);
-                ctx.lineTo(sA.x, canvas.height);
+                ctx.moveTo(screenX, 0);
+                ctx.lineTo(screenX, canvas.height);
                 ctx.stroke();
             }
-            for (let y = Math.floor(yStart / major)*major; y <= yEnd; y += major) {
-                const sA = modelToScreen(0,y);
+            
+            // Major horizontal
+            for (let y = Math.floor(yStart / majorSpacing) * majorSpacing; y <= yEnd; y += majorSpacing) {
+                const screenY = modelToScreen(0, y).y;
                 ctx.beginPath();
-                ctx.moveTo(0, sA.y);
-                ctx.lineTo(canvas.width, sA.y);
+                ctx.moveTo(0, screenY);
+                ctx.lineTo(canvas.width, screenY);
                 ctx.stroke();
             }
-
-            // axes
+            
+            // Axes
             ctx.strokeStyle = "#666";
             ctx.lineWidth = 1.5;
-            // x-axis
-            const sOriX1 = modelToScreen(0,0);
+            
+            // X-axis
             ctx.beginPath();
-            ctx.moveTo(0, sOriX1.y);
-            ctx.lineTo(canvas.width, sOriX1.y);
+            ctx.moveTo(0, config.originY);
+            ctx.lineTo(canvas.width, config.originY);
             ctx.stroke();
-            // y-axis
+            
+            // Y-axis
             ctx.beginPath();
-            ctx.moveTo(sOriX1.x, 0);
-            ctx.lineTo(sOriX1.x, canvas.height);
+            ctx.moveTo(config.originX, 0);
+            ctx.lineTo(config.originX, canvas.height);
             ctx.stroke();
-
-            // axis labels
+            
+            // Axis labels
             ctx.font = "bold 14px Arial";
             ctx.fillStyle = "#333";
-            // X
+            
+            // X label
             ctx.textAlign = "center";
-            ctx.fillText("X (m)", canvas.width / 2, sOriX1.y + 30);
-            // Y
+            ctx.fillText("X (m)", canvas.width / 2, config.originY + 40);
+            
+            // Y label (rotated)
             ctx.save();
-            ctx.translate(sOriX1.x - 30, canvas.height / 2);
-            ctx.rotate(-Math.PI/2);
+            ctx.translate(config.originX - 40, canvas.height / 2);
+            ctx.rotate(-Math.PI / 2);
             ctx.fillText("Y (m)", 0, 0);
             ctx.restore();
-
-            // origin label
-            ctx.font = "bold 12px Arial";
+            
+            // Minor numeric labels
+            ctx.font = "12px Arial";
+            // X
+            for (let x = xStart; x <= xEnd; x += config.gridSpacing) {
+                if (Math.abs(x) < 0.001) continue;
+                const screenX = modelToScreen(x, 0).x;
+                if (Math.abs(x % majorSpacing) < 0.001) {
+                    ctx.fillStyle = "#222";
+                    ctx.textAlign = "center";
+                    ctx.fillText(`${x.toFixed(0)}m`, screenX, config.originY + 20);
+                } else if (config.gridSpacing >= 0.5) {
+                    ctx.fillStyle = "#777";
+                    ctx.fillText(`${x.toFixed(1)}`, screenX, config.originY + 15);
+                }
+            }
+            // Y
+            for (let y = yStart; y <= yEnd; y += config.gridSpacing) {
+                if (Math.abs(y) < 0.001) continue;
+                const screenY = modelToScreen(0, y).y;
+                if (Math.abs(y % majorSpacing) < 0.001) {
+                    ctx.fillStyle = "#222";
+                    ctx.textAlign = "right";
+                    ctx.fillText(`${y.toFixed(0)}m`, config.originX - 10, screenY + 4);
+                } else if (config.gridSpacing >= 0.5) {
+                    ctx.fillStyle = "#777";
+                    ctx.fillText(`${y.toFixed(1)}`, config.originX - 5, screenY + 3);
+                }
+            }
+            
+            // Origin label
             ctx.fillStyle = "#000";
+            ctx.font = "bold 12px Arial";
             ctx.textAlign = "left";
-            ctx.fillText("(0,0)", sOriX1.x+5, sOriX1.y-5);
-
-            // top-left label for grid spacing
+            ctx.fillText("(0,0)", config.originX + 5, config.originY - 5);
+            
+            // Grid spacing display top-left
             ctx.fillStyle = "rgba(0,0,0,0.6)";
-            ctx.fillRect(10,10,180,30);
-            ctx.fillStyle = "#fff";
-            ctx.textAlign = "left";
-            ctx.fillText(`Grid Spacing: ${config.gridSpacing}m`, 20,30);
-
+            ctx.fillRect(10, 10, 160, 30);
+            ctx.fillStyle = "white";
+            ctx.font = "14px Arial";
+            ctx.fillText(`Grid Spacing: ${config.gridSpacing}m`, 20, 30);
+            
             ctx.restore();
         }
 
