@@ -57,7 +57,7 @@
         .zoom-controls {
             position: absolute;
             top: 10px;
-            right: 10px; /* Moved to the right */
+            right: 10px;
             background: rgba(255,255,255,0.8);
             border: 1px solid #ccc;
             border-radius: 5px;
@@ -219,7 +219,7 @@
             nuStartVal: -1000,   
             nuEndVal: -500,      
             isSnap: true,
-            gridSpacing: 0.5,      
+            gridSpacing: 1,      
             scaleFactor: 30,     
             originX: 0,          
             originY: 0           
@@ -232,7 +232,7 @@
         const history = [];
         const maxHistory = 50;
 
-        // Canvas
+        // Canvas & context
         const canvas = document.getElementById('femCanvas');
         const ctx = canvas.getContext('2d');
         
@@ -240,16 +240,22 @@
         let cursorX = 0;
         let cursorY = 0;
 
-        // Desktop right-click panning
-        let isRightClickPanning = false;
-        let lastPanX = 0;
-        let lastPanY = 0;
+        // =========================
+        // === Desktop Left-Click Panning with threshold ===
+        // We'll track mousedown → if the user drags more than some px, we pan.
+        // If they release without dragging too far, we place a node/member/etc.
+        // =========================
+        let isLeftClickDown = false;
+        let desktopStartX = 0, desktopStartY = 0;
+        let desktopHasPanned = false; 
+        const DESKTOP_MOVE_THRESHOLD = 5; // px for deciding pan vs. click
+        let lastDesktopPanX = 0, lastDesktopPanY = 0; // track for pan updates
 
-        // Mobile single-finger pan / tap logic
+        // --- Mobile single-finger pan / tap logic
         let touchStartX = 0, touchStartY = 0;
         let isSingleFingerPanning = false;
         let hasMovedSignificantly = false;
-        const MOVE_THRESHOLD = 10; // px
+        const MOVE_THRESHOLD = 10; // px for mobile
 
         // If user ever goes from 1 finger to 2 fingers, we skip node placement
         let touchWentToMultiFinger = false;
@@ -269,7 +275,7 @@
             canvas.height = window.innerHeight;
             
             config.originX = 50;
-            config.originY = canvas.height - 50 - 10 * config.scaleFactor;
+            config.originY = canvas.height - 50;
             config.originX = Math.round(config.originX / config.scaleFactor) * config.scaleFactor;
             config.originY = Math.round(config.originY / config.scaleFactor) * config.scaleFactor;
             
@@ -396,32 +402,54 @@
         clearBtn.addEventListener('click', handleClear);
         saveBtn.addEventListener('click', handleSave);
 
-        // Prevent default context menu so right-click can pan
+        // Prevent default context menu
         canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-        // === Desktop Right-Click Panning ===
-        canvas.addEventListener('mousedown', e => {
-            if (e.button === 2) { // right-click
-                isRightClickPanning = true;
-                lastPanX = e.clientX;
-                lastPanY = e.clientY;
+        // --- Desktop Left-Click Panning logic (replaces "click" event for node placement) ---
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) { 
+                // left button down => possibly pan or click
+                isLeftClickDown = true;
+                desktopStartX = e.clientX;
+                desktopStartY = e.clientY;
+                desktopHasPanned = false;
+                lastDesktopPanX = e.clientX;
+                lastDesktopPanY = e.clientY;
             }
         });
-        document.addEventListener('mouseup', e => {
-            if (e.button === 2) {
-                isRightClickPanning = false;
+
+        document.addEventListener('mouseup', (e) => {
+            if (e.button === 0 && isLeftClickDown) {
+                // If we have NOT panned, treat it as a click => place node, etc.
+                if (!desktopHasPanned && !isPinchZooming && !isSingleFingerPanning) {
+                    const rect = canvas.getBoundingClientRect();
+                    const px = e.clientX - rect.left;
+                    const py = e.clientY - rect.top;
+                    handleCanvasClick(px, py);
+                }
+                isLeftClickDown = false;
             }
         });
-        canvas.addEventListener('mousemove', e => {
-            if (isRightClickPanning) {
-                const dx = e.clientX - lastPanX;
-                const dy = e.clientY - lastPanY;
-                config.originX += dx;
-                config.originY += dy;
-                lastPanX = e.clientX;
-                lastPanY = e.clientY;
-                draw();
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isLeftClickDown) {
+                // Check distance from the start
+                const dx = e.clientX - desktopStartX;
+                const dy = e.clientY - desktopStartY;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist > DESKTOP_MOVE_THRESHOLD) {
+                    // Pan
+                    desktopHasPanned = true;
+                    const ddx = e.clientX - lastDesktopPanX;
+                    const ddy = e.clientY - lastDesktopPanY;
+                    config.originX += ddx;
+                    config.originY += ddy;
+                    lastDesktopPanX = e.clientX;
+                    lastDesktopPanY = e.clientY;
+                    draw();
+                }
             } else {
+                // Just update cursor coords
                 const rect = canvas.getBoundingClientRect();
                 cursorX = e.clientX - rect.left;
                 cursorY = e.clientY - rect.top;
@@ -429,32 +457,27 @@
             }
         });
 
-        // === Mobile Touch Events (with preventDefault) ===
+        // === Mobile Touch Events ===
         canvas.addEventListener('touchstart', e => {
             e.preventDefault(); 
             if (e.touches.length === 1) {
-                // Single finger started
                 isSingleFingerPanning = false;
                 hasMovedSignificantly = false;
-                touchWentToMultiFinger = false; // reset for a new single-finger gesture
+                touchWentToMultiFinger = false;
                 const t = e.touches[0];
                 touchStartX = t.clientX;
                 touchStartY = t.clientY;
             }
-            // If 2 touches => pinch
             if (e.touches.length === 2) {
                 isPinchZooming = true;
                 lastPinchDist = getPinchDistance(e.touches);
                 lastPinchCenter = getTouchCenter(e.touches);
-
-                // If we started with 1 finger but now have 2, mark multi-finger
                 touchWentToMultiFinger = true;
             }
         }, { passive: false });
 
         canvas.addEventListener('touchmove', e => {
             e.preventDefault();
-            // Pinch zoom?
             if (isPinchZooming && e.touches.length === 2) {
                 const newDist = getPinchDistance(e.touches);
                 const center = getTouchCenter(e.touches);
@@ -464,13 +487,11 @@
                 lastPinchCenter = center;
                 return;
             }
-            // Single-finger
             if (e.touches.length === 1) {
                 const t = e.touches[0];
                 const dx = t.clientX - touchStartX;
                 const dy = t.clientY - touchStartY;
                 if (Math.sqrt(dx*dx + dy*dy) > MOVE_THRESHOLD) {
-                    // Pan
                     if (!isSingleFingerPanning) {
                         isSingleFingerPanning = true;
                         lastPanX = t.clientX;
@@ -491,18 +512,11 @@
 
         canvas.addEventListener('touchend', e => {
             e.preventDefault();
-            // If we lose a finger from pinch
             if (e.touches.length < 2) {
                 isPinchZooming = false;
             }
-            // Single-finger ended
-            // Only place a node if: 
-            // 1) We didn't move significantly 
-            // 2) We never introduced a second finger 
-            // 3) There's now 0 touches 
-            // 4) Not pinchZooming
             if (e.touches.length === 0 && !hasMovedSignificantly && !touchWentToMultiFinger && !isPinchZooming) {
-                // That was a "tap"
+                // Single tap => place node
                 const rect = canvas.getBoundingClientRect();
                 const px = touchStartX - rect.left;
                 const py = touchStartY - rect.top;
@@ -519,16 +533,12 @@
             isSingleFingerPanning = false;
         }, { passive: false });
 
-        // If user adds a second finger after a single-finger started
-        // This event can also happen if you add a finger. We'll check length > 1
         canvas.addEventListener('touchstart', e => {
             if (e.touches.length === 2) {
-                // In case it wasn't already set, or was set in the same event
                 touchWentToMultiFinger = true;
             }
         }, { passive: false });
 
-        // Utility for pinch distance
         function getPinchDistance(touches) {
             const x1 = touches[0].clientX, y1 = touches[0].clientY;
             const x2 = touches[1].clientX, y2 = touches[1].clientY;
@@ -536,7 +546,6 @@
             const dy = y2 - y1;
             return Math.sqrt(dx*dx + dy*dy);
         }
-        // Utility for pinch center
         function getTouchCenter(touches) {
             const x1 = touches[0].clientX, y1 = touches[0].clientY;
             const x2 = touches[1].clientX, y2 = touches[1].clientY;
@@ -545,7 +554,6 @@
                 y: (y1 + y2)/2
             };
         }
-        // Zoom from pinch ratio
         function pinchZoom(ratio, centerTouch) {
             const rect = canvas.getBoundingClientRect();
             const centerX = centerTouch.x - rect.left;
@@ -562,20 +570,8 @@
             draw();
         }
 
-        // Desktop "click" => place node/member/support/load (only if left-click)
-        canvas.addEventListener('click', e => {
-            // skip if right-click panning or pinch in progress
-            if (isRightClickPanning || isPinchZooming || isSingleFingerPanning) {
-                return;
-            }
-            if (e.button !== 0) return; // only left-click
-
-            const rect = canvas.getBoundingClientRect();
-            const px = e.clientX - rect.left;
-            const py = e.clientY - rect.top;
-            handleCanvasClick(px, py);
-        });
-
+        // Replaces the old "click" event for desktop
+        // We call this from "mouseup" if the user didn't pan
         function handleCanvasClick(px, py) {
             let mc = screenToModel(px, py);
             if (config.isSnap) {
@@ -688,19 +684,17 @@
             draw();
         }
 
-        // Convert screen coords → model coords
+        // Basic conversions
         function screenToModel(sx, sy) {
             const mx = (sx - config.originX) / config.scaleFactor;
             const my = (config.originY - sy) / config.scaleFactor;
             return {x: mx, y: my};
         }
-        // Convert model coords → screen coords
         function modelToScreen(mx, my) {
             const sx = config.originX + mx * config.scaleFactor;
             const sy = config.originY - my * config.scaleFactor;
             return {x: sx, y: sy};
         }
-        // Snap
         function snapInModelSpace(coord) {
             return Math.round(coord / config.gridSpacing) * config.gridSpacing;
         }
@@ -753,6 +747,7 @@
             return Math.hypot(px - cx, py - cy);
         }
 
+        // History
         function pushHistory() {
             const snapshot = JSON.parse(JSON.stringify(model));
             history.push(snapshot);
