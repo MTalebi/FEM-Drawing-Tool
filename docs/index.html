@@ -26,10 +26,10 @@
             background: #fff;
             position: relative;
         }
-        /* IMPORTANT for multi-touch panning: disable default browser gestures */
         canvas {
             border: 1px solid #ccc;
-            touch-action: none; /* Allows us to handle two-finger drag ourselves */
+            /* Needed so we can handle pinch/touch ourselves */
+            touch-action: none;
         }
         h2 {
             margin-top: 0;
@@ -51,6 +51,22 @@
             margin-top: 10px;
             border-top: 1px solid #ccc;
             padding-top: 10px;
+        }
+
+        /* Zoom/Home button styling (absolute at top-left of canvas) */
+        .zoom-controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255,255,255,0.8);
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 5px;
+        }
+        .zoom-controls button {
+            margin: 5px 8px 5px 0;
+            font-size: 16px;
+            cursor: pointer;
         }
 
         /* --- Media query: use a 25%/75% split on screens < 600px. --- */
@@ -170,6 +186,13 @@
         <!-- Canvas area -->
         <div class="canvas-container">
             <canvas id="femCanvas"></canvas>
+
+            <!-- Zoom/Home UI buttons -->
+            <div class="zoom-controls">
+                <button id="zoomInBtn">+</button>
+                <button id="zoomOutBtn">-</button>
+                <button id="homeBtn">&#8962;</button>
+            </div>
         </div>
     </div>
 
@@ -198,7 +221,7 @@
             nuEndVal: -500,       // for nonuniform end
             isSnap: true,
             gridSpacing: 1,       // in meters
-            scaleFactor: 30,      // pixels per meter
+            scaleFactor: 30,      // pixels per meter (initial zoom)
             originX: 0,           // X coordinate of origin in screen
             originY: 0            // Y coordinate of origin in screen
         };
@@ -217,18 +240,25 @@
         const canvas = document.getElementById('femCanvas');
         const ctx = canvas.getContext('2d');
         
-        // For cursor coordinates (in screen space)
+        // Cursor coordinates (in screen space)
         let cursorX = 0;
         let cursorY = 0;
 
-        // --- Right-click panning variables ---
-        let isPanning = false;
+        // --- Desktop right-click panning variables ---
+        let isRightClickPanning = false;
         let lastPanX = 0;
         let lastPanY = 0;
 
-        // --- Two-finger panning variables (touch) ---
-        let isTouchPanning = false;
-        let lastTouchCenter = { x: 0, y: 0 };
+        // --- Mobile single-finger panning & "tap" detection ---
+        let touchStartX = 0, touchStartY = 0;
+        let hasMovedSignificantly = false;
+        let isSingleFingerPanning = false;
+        const MOVE_THRESHOLD = 10; // px for deciding pan vs. tap
+
+        // --- Two-finger pinch zoom variables ---
+        let isPinchZooming = false;
+        let lastPinchDist = 0;
+        let lastPinchCenter = { x: 0, y: 0 };
 
         // Set canvas size and origin
         function resizeCanvas() {
@@ -250,11 +280,50 @@
             
             draw();
         }
-
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // UI references
+        // --- Zoom/Home UI Buttons ---
+        const zoomInBtn = document.getElementById('zoomInBtn');
+        const zoomOutBtn = document.getElementById('zoomOutBtn');
+        const homeBtn = document.getElementById('homeBtn');
+
+        zoomInBtn.addEventListener('click', () => {
+            zoomAboutCenter(1.2); // 20% zoom in
+        });
+        zoomOutBtn.addEventListener('click', () => {
+            zoomAboutCenter(0.8); // 20% zoom out
+        });
+        homeBtn.addEventListener('click', () => {
+            // Reset to original scale & origin
+            config.scaleFactor = 30;
+            resizeCanvas();
+        });
+
+        function zoomAboutCenter(scaleFactorDelta) {
+            // Zoom about the *canvas center* in screen coords
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+
+            // Convert that center to model coords
+            const modelBefore = screenToModel(centerX, centerY);
+
+            // Apply scale
+            config.scaleFactor *= scaleFactorDelta;
+            // clamp the scaleFactor
+            config.scaleFactor = Math.min(Math.max(config.scaleFactor, 5), 500);
+
+            // Convert the same center back to screen coords, see how it changed
+            const screenAfter = modelToScreen(modelBefore.x, modelBefore.y);
+
+            // Shift origin so that the center remains the same point in model coords
+            config.originX += (centerX - screenAfter.x);
+            config.originY += (centerY - screenAfter.y);
+
+            draw();
+        }
+
+        // --- UI references ---
         const modeRadios = document.querySelectorAll('input[name="mode"]');
         const memberTypeRadios = document.querySelectorAll('input[name="memType"]');
         const supportTypeRadios = document.querySelectorAll('input[name="supportType"]');
@@ -314,7 +383,7 @@
             }
         }
 
-        // Event listeners for the mode, type, etc.
+        // Radio changes
         modeRadios.forEach(radio => {
             radio.addEventListener('change', () => {
                 if (radio.checked) {
@@ -373,31 +442,27 @@
         clearBtn.addEventListener('click', handleClear);
         saveBtn.addEventListener('click', handleSave);
 
-        // --- Prevent context menu on right-click for panning ---
+
+        // --- Prevent default context menu so right-click can pan ---
         canvas.addEventListener('contextmenu', (e) => {
             e.preventDefault();
         });
 
-        // --- Right-click panning handlers ---
+        // --- Desktop RIGHT-CLICK Panning ---
         canvas.addEventListener('mousedown', (e) => {
-            // Right click => start panning
-            if (e.button === 2) {
-                isPanning = true;
+            if (e.button === 2) { // right-click
+                isRightClickPanning = true;
                 lastPanX = e.clientX;
                 lastPanY = e.clientY;
             }
         });
-
         document.addEventListener('mouseup', (e) => {
-            // Release right-click => stop panning
             if (e.button === 2) {
-                isPanning = false;
+                isRightClickPanning = false;
             }
         });
-
         canvas.addEventListener('mousemove', (e) => {
-            if (isPanning) {
-                // Move origin by mouse delta
+            if (isRightClickPanning) {
                 const dx = e.clientX - lastPanX;
                 const dy = e.clientY - lastPanY;
                 
@@ -407,9 +472,9 @@
                 lastPanX = e.clientX;
                 lastPanY = e.clientY;
                 
-                draw(); // update view
+                draw(); // update
             } else {
-                // Normal movement to update cursor coords
+                // Just track cursor for coordinate display
                 const rect = canvas.getBoundingClientRect();
                 cursorX = e.clientX - rect.left;
                 cursorY = e.clientY - rect.top;
@@ -417,78 +482,175 @@
             }
         });
 
-        // --- Two-finger (touch) panning ---
+        // --- Mobile ONE-FINGER Panning / Tap detection ---
         canvas.addEventListener('touchstart', (e) => {
+            // If 2 touches => pinch zoom logic below.
+            // If 1 touch => we might be panning or tapping.
+            if (e.touches.length === 1) {
+                isSingleFingerPanning = false;
+                hasMovedSignificantly = false;
+                const t = e.touches[0];
+                touchStartX = t.clientX;
+                touchStartY = t.clientY;
+            }
+            // If 2 touches => start pinch zoom
             if (e.touches.length === 2) {
-                // Get the midpoint of the two touches
-                const center = getTouchCenter(e.touches);
-                lastTouchCenter.x = center.x;
-                lastTouchCenter.y = center.y;
-                isTouchPanning = true;
+                isPinchZooming = true;
+                lastPinchDist = getPinchDistance(e.touches);
+                lastPinchCenter = getTouchCenter(e.touches);
             }
         }, { passive: false });
 
         canvas.addEventListener('touchmove', (e) => {
-            if (isTouchPanning && e.touches.length === 2) {
-                e.preventDefault(); // prevent scrolling
+            // Pinch zoom?
+            if (isPinchZooming && e.touches.length === 2) {
+                e.preventDefault(); // prevent browser scroll
+                const newDist = getPinchDistance(e.touches);
                 const center = getTouchCenter(e.touches);
 
-                // Shift origin by difference between current center and last center
-                const dx = center.x - lastTouchCenter.x;
-                const dy = center.y - lastTouchCenter.y;
-                config.originX += dx;
-                config.originY += dy;
+                // Zoom ratio
+                const ratio = newDist / lastPinchDist;
+                pinchZoom(ratio, center);
 
-                lastTouchCenter.x = center.x;
-                lastTouchCenter.y = center.y;
+                // Update for next
+                lastPinchDist = newDist;
+                lastPinchCenter = center;
+                return;
+            }
 
-                draw();
+            // Otherwise, if 1 finger => potential pan
+            if (e.touches.length === 1) {
+                const t = e.touches[0];
+                const dx = t.clientX - touchStartX;
+                const dy = t.clientY - touchStartY;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist > MOVE_THRESHOLD) {
+                    // Start panning
+                    e.preventDefault(); // disable scroll
+                    if (!isSingleFingerPanning) {
+                        // We just "entered" panning
+                        isSingleFingerPanning = true;
+                        lastPanX = t.clientX;
+                        lastPanY = t.clientY;
+                    } else {
+                        // Keep panning
+                        const ddx = t.clientX - lastPanX;
+                        const ddy = t.clientY - lastPanY;
+                        config.originX += ddx;
+                        config.originY += ddy;
+                        lastPanX = t.clientX;
+                        lastPanY = t.clientY;
+                        draw();
+                    }
+                    hasMovedSignificantly = true;
+                }
             }
         }, { passive: false });
 
         canvas.addEventListener('touchend', (e) => {
-            // If fewer than 2 touches remain, stop panning
+            // If pinch ended
             if (e.touches.length < 2) {
-                isTouchPanning = false;
+                isPinchZooming = false;
+            }
+
+            // If single-finger ended
+            if (e.touches.length === 0 && !hasMovedSignificantly && !isPinchZooming) {
+                // That was a tap => place node / item
+                const rect = canvas.getBoundingClientRect();
+                const px = touchStartX - rect.left;
+                const py = touchStartY - rect.top;
+                handleCanvasClick(px, py);
+            }
+
+            if (e.touches.length === 0) {
+                isSingleFingerPanning = false;
             }
         });
-
         canvas.addEventListener('touchcancel', () => {
-            isTouchPanning = false;
+            isSingleFingerPanning = false;
+            isPinchZooming = false;
         });
 
-        // Utility: Get average x/y of two touches
-        function getTouchCenter(touches) {
-            // We assume exactly 2 touches are present
+        // Utility: distance between two touches
+        function getPinchDistance(touches) {
             const x1 = touches[0].clientX;
             const y1 = touches[0].clientY;
             const x2 = touches[1].clientX;
             const y2 = touches[1].clientY;
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            return Math.sqrt(dx*dx + dy*dy);
+        }
 
+        // Utility: center of two touches
+        function getTouchCenter(touches) {
+            const x1 = touches[0].clientX;
+            const y1 = touches[0].clientY;
+            const x2 = touches[1].clientX;
+            const y2 = touches[1].clientY;
             return {
                 x: (x1 + x2) / 2,
                 y: (y1 + y2) / 2
             };
         }
 
-        // Left-click => place node/member/support/load
+        // Perform pinch zoom around the two-finger midpoint
+        function pinchZoom(ratio, centerTouch) {
+            // 1) Convert that center from screen -> model
+            const rect = canvas.getBoundingClientRect();
+            const centerX = centerTouch.x - rect.left;
+            const centerY = centerTouch.y - rect.top;
+            const modelBefore = screenToModel(centerX, centerY);
+
+            // 2) Update scaleFactor
+            config.scaleFactor *= ratio;
+            // clamp
+            config.scaleFactor = Math.min(Math.max(config.scaleFactor, 5), 500);
+
+            // 3) figure out how the center has shifted after the new scale
+            const screenAfter = modelToScreen(modelBefore.x, modelBefore.y);
+            config.originX += (centerX - screenAfter.x);
+            config.originY += (centerY - screenAfter.y);
+
+            draw();
+        }
+
+        // Desktop "click" => place node/member/support/load (only if left-click)
         canvas.addEventListener('click', (e) => {
-            // If we are panning with right-click or two-finger, skip placement
-            if (isPanning || isTouchPanning) {
+            // If right-click panning or pinch => skip
+            if (isRightClickPanning || isPinchZooming || isSingleFingerPanning) {
                 return;
             }
-            // Only handle left-click (button === 0)
+            // Only handle left-click
             if (e.button !== 0) return;
 
             const rect = canvas.getBoundingClientRect();
             const pixelX = e.clientX - rect.left;
             const pixelY = e.clientY - rect.top;
-            
             handleCanvasClick(pixelX, pixelY);
         });
 
+        // Convert screen coords → model coords (meters)
+        function screenToModel(sx, sy) {
+            const mx = (sx - config.originX) / config.scaleFactor;
+            const my = (config.originY - sy) / config.scaleFactor; // invert y
+            return {x: mx, y: my};
+        }
+
+        // Convert model coords (meters) → screen coords
+        function modelToScreen(mx, my) {
+            const sx = config.originX + mx * config.scaleFactor;
+            const sy = config.originY - my * config.scaleFactor;
+            return {x: sx, y: sy};
+        }
+
+        // Snap a model coordinate to the nearest grid step
+        function snapInModelSpace(coord) {
+            return Math.round(coord / config.gridSpacing) * config.gridSpacing;
+        }
+
         function handleCanvasClick(px, py) {
-            // Convert screen coords to model coords
+            // Convert screen to model
             let mc = screenToModel(px, py);
             if (config.isSnap) {
                 mc.x = snapInModelSpace(mc.x);
@@ -607,35 +769,12 @@
             draw();
         }
 
-        // Convert screen coords → model coords (meters)
-        function screenToModel(sx, sy) {
-            const mx = (sx - config.originX) / config.scaleFactor;
-            const my = (config.originY - sy) / config.scaleFactor; // invert y
-            return {x: mx, y: my};
-        }
-
-        // Convert model coords (meters) → screen coords
-        function modelToScreen(mx, my) {
-            const sx = config.originX + mx * config.scaleFactor;
-            const sy = config.originY - my * config.scaleFactor;
-            return {x: sx, y: sy};
-        }
-
-        // Snap a model coordinate to the nearest grid step
-        function snapInModelSpace(coord) {
-            return Math.round(coord / config.gridSpacing) * config.gridSpacing;
-        }
-
-        // Returns the ID of the closest node (in model space) within 'tolerance' (in screen px)
+        // Returns the ID of the closest node (in model space) within 'tolerance' (screen px)
         function findClosestNode(mX, mY, tolerancePx=10) {
             let closestId = null;
             let minDist = Infinity;
             for (const nid in model.nodes) {
                 const nd = model.nodes[nid];
-                const dx = nd.x - mX;
-                const dy = nd.y - mY;
-                const dist = Math.sqrt(dx*dx + dy*dy);
-                // Compare in screen space
                 const {x: s1, y: s2} = modelToScreen(nd.x, nd.y);
                 const {x: s3, y: s4} = modelToScreen(mX, mY);
                 const screenDist = Math.sqrt((s1 - s3)**2 + (s2 - s4)**2);
@@ -670,7 +809,7 @@
             return (minDist <= tolerancePx) ? closestId : null;
         }
 
-        // distance from point(px,py) to line segment (x1,y1)-(x2,y2)
+        // distance from point(px,py) to segment(x1,y1)-(x2,y2)
         function pointToSegmentDist(px, py, x1, y1, x2, y2) {
             const dx = x2 - x1;
             const dy = y2 - y1;
@@ -781,7 +920,7 @@
         }
 
         function drawCursorCoordinates() {
-            // Show the model-space coordinates of the current mouse position
+            // Show the model-space coordinates of the current mouse/touch position
             const mc = screenToModel(cursorX, cursorY);
             
             ctx.font = "12px Arial";
@@ -1036,7 +1175,7 @@
                         ctx.fill();
                         break;
                     case "hinge":
-                        // roller_x + roller_y combined
+                        // combine roller_x + roller_y
                         ctx.beginPath();
                         ctx.moveTo(0, 0);
                         ctx.lineTo(-supportPix, -supportPix/2);
@@ -1057,9 +1196,9 @@
         }
 
         function drawLoads() {
-            // For distributed loads, place 7 arrows at t=0, 1/6,..., 1
+            // For distributed loads, place 7 arrows at t=0,1/6,...,1
             const distributedPositions = [0, 1/6, 2/6, 3/6, 4/6, 5/6, 1];
-
+            // Arrow size rules
             const arrowLenPointUniform = maxMemberLength * (1/5);
             const arrowLenMinNonuniform = maxMemberLength * (1/7);
             const arrowLenMaxNonuniform = maxMemberLength * (1/5);
@@ -1161,7 +1300,7 @@
                     const startVal = ld.start_val ?? -1000;
                     const endVal = ld.end_val ?? -500;
 
-                    // 7 arrows, linear interpolation
+                    // 7 arrows, each with linear interpolation
                     for (let i=0; i<distributedPositions.length; i++){
                         const t = distributedPositions[i];
                         const valT = startVal + t*(endVal - startVal); 
