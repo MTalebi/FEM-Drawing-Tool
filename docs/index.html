@@ -28,8 +28,8 @@
         }
         canvas {
             border: 1px solid #ccc;
-            /* Needed so we can handle pinch/touch ourselves */
-            touch-action: none; /* Prevents default scroll/zoom so we can handle touches */
+            /* For multi-touch pinch, etc. */
+            touch-action: none;
         }
         h2 {
             margin-top: 0;
@@ -57,7 +57,7 @@
         .zoom-controls {
             position: absolute;
             top: 10px;
-            right: 10px;
+            right: 10px; 
             background: rgba(255,255,255,0.8);
             border: 1px solid #ccc;
             border-radius: 5px;
@@ -69,15 +69,15 @@
             cursor: pointer;
         }
 
-        /* --- Media query: use a 25%/75% split on screens < 600px. --- */
+        /* When under 600px width, use 25%/75% layout */
         @media (max-width: 600px) {
             .sidebar {
                 width: 25vw;
                 min-width: 25vw;
             }
             .canvas-container {
-                width: 75vw; 
-                flex: none;  
+                width: 75vw;
+                flex: none;
             }
         }
     </style>
@@ -87,7 +87,7 @@
         <!-- Left panel -->
         <div class="sidebar">
             <h2>Structural FEM Tool</h2>
-            <p><em>By Mohammad Talebi-Kalaleh (talebika@ualberta.ca)</em></p>
+            <p><em>By ...</em></p>
             
             <!-- Mode selection -->
             <div class="section">
@@ -136,7 +136,7 @@
                     
                     <!-- Load Value -->
                     <div id="uniform-load-value">
-                        <label>Load Value:</label><br>
+                        <label>Load Value (N or N/m):</label><br>
                         <input type="number" id="loadValue" value="-1000"><br>
                     </div>
                     
@@ -155,10 +155,10 @@
                 <strong>Grid Settings</strong><br>
                 <label><input type="checkbox" id="isSnap" checked> Grid Snap</label><br>
                 <label>Grid spacing (meters):</label><br>
-                <select id="Select">
+                <select id="gridSpacingSelect">
                     <option value="0.1">0.1 m</option>
-                    <option value="0.5" selected>0.5 m</option>
-                    <option value="1">1 m</option>
+                    <option value="0.5">0.5 m</option>
+                    <option value="1" selected>1 m</option>
                     <option value="2">2 m</option>
                     <option value="5">5 m</option>
                 </select>
@@ -187,7 +187,7 @@
         <div class="canvas-container">
             <canvas id="femCanvas"></canvas>
 
-            <!-- Zoom/Home UI buttons (top-right) -->
+            <!-- Zoom/Home UI -->
             <div class="zoom-controls">
                 <button id="zoomInBtn">+</button>
                 <button id="zoomOutBtn">-</button>
@@ -219,10 +219,10 @@
             nuStartVal: -1000,   
             nuEndVal: -500,      
             isSnap: true,
-            gridSpacing: 0.5,      
-            scaleFactor: 30,     
-            originX: 0,          
-            originY: 0           
+            gridSpacing: 0.5,  // default 0.5 m
+            scaleFactor: 30,   
+            originX: 0,       
+            originY: 0        
         };
 
         let tempSelectedNode = null;
@@ -240,32 +240,28 @@
         let cursorX = 0;
         let cursorY = 0;
 
-        // =========================
-        // === Desktop Left-Click Panning with threshold ===
-        // We'll track mousedown → if the user drags more than some px, we pan.
-        // If they release without dragging too far, we place a node/member/etc.
-        // =========================
+        // Desktop left-drag panning
         let isLeftClickDown = false;
         let desktopStartX = 0, desktopStartY = 0;
         let desktopHasPanned = false; 
-        const DESKTOP_MOVE_THRESHOLD = 5; // px for deciding pan vs. click
-        let lastDesktopPanX = 0, lastDesktopPanY = 0; // track for pan updates
+        const DESKTOP_MOVE_THRESHOLD = 10; // ~10px threshold
+        let lastDesktopPanX = 0, lastDesktopPanY = 0;
 
-        // --- Mobile single-finger pan / tap logic
+        // Mobile single-finger panning
         let touchStartX = 0, touchStartY = 0;
         let isSingleFingerPanning = false;
         let hasMovedSignificantly = false;
         const MOVE_THRESHOLD = 10; // px for mobile
 
-        // If user ever goes from 1 finger to 2 fingers, we skip node placement
+        // Track if user introduced 2 fingers
         let touchWentToMultiFinger = false;
 
-        // Two-finger pinch to zoom
+        // Two-finger pinch zoom
         let isPinchZooming = false;
         let lastPinchDist = 0;
         let lastPinchCenter = { x: 0, y: 0 };
 
-        // Adjust canvas size
+        // On resize, set up ~15m wide, ~10m tall region
         function resizeCanvas() {
             if (window.innerWidth <= 600) {
                 canvas.width = window.innerWidth * 0.75;
@@ -273,12 +269,12 @@
                 canvas.width = window.innerWidth - 300;
             }
             canvas.height = window.innerHeight;
-            
+
+            // Show ~0..15 in x, 0..10 in y
+            config.scaleFactor = 30;
             config.originX = 50;
-            config.originY = (canvas.height - 50) - (10 * config.scaleFactor);
-            config.originX = Math.round(config.originX / config.scaleFactor) * config.scaleFactor;
-            config.originY = Math.round(config.originY / config.scaleFactor) * config.scaleFactor;
-            
+            config.originY = canvas.height - 50 - (10 * config.scaleFactor);
+
             draw();
         }
         window.addEventListener('resize', resizeCanvas);
@@ -297,7 +293,9 @@
         });
         homeBtn.addEventListener('click', () => {
             config.scaleFactor = 30;
-            resizeCanvas();
+            config.originX = 50;
+            config.originY = canvas.height - 50 - (10 * config.scaleFactor);
+            draw();
         });
 
         function zoomAboutCenter(scale) {
@@ -402,13 +400,12 @@
         clearBtn.addEventListener('click', handleClear);
         saveBtn.addEventListener('click', handleSave);
 
-        // Prevent default context menu
+        // Prevent default context menu on right-click
         canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-        // --- Desktop Left-Click Panning logic (replaces "click" event for node placement) ---
+        // Desktop left-click panning
         canvas.addEventListener('mousedown', (e) => {
             if (e.button === 0) { 
-                // left button down => possibly pan or click
                 isLeftClickDown = true;
                 desktopStartX = e.clientX;
                 desktopStartY = e.clientY;
@@ -433,12 +430,11 @@
 
         canvas.addEventListener('mousemove', (e) => {
             if (isLeftClickDown) {
-                // Check distance from the start
                 const dx = e.clientX - desktopStartX;
                 const dy = e.clientY - desktopStartY;
                 const dist = Math.sqrt(dx*dx + dy*dy);
                 if (dist > DESKTOP_MOVE_THRESHOLD) {
-                    // Pan
+                    // Panning
                     desktopHasPanned = true;
                     const ddx = e.clientX - lastDesktopPanX;
                     const ddy = e.clientY - lastDesktopPanY;
@@ -449,7 +445,6 @@
                     draw();
                 }
             } else {
-                // Just update cursor coords
                 const rect = canvas.getBoundingClientRect();
                 cursorX = e.clientX - rect.left;
                 cursorY = e.clientY - rect.top;
@@ -457,7 +452,7 @@
             }
         });
 
-        // === Mobile Touch Events ===
+        // Mobile touch events
         canvas.addEventListener('touchstart', e => {
             e.preventDefault(); 
             if (e.touches.length === 1) {
@@ -549,10 +544,7 @@
         function getTouchCenter(touches) {
             const x1 = touches[0].clientX, y1 = touches[0].clientY;
             const x2 = touches[1].clientX, y2 = touches[1].clientY;
-            return {
-                x: (x1 + x2)/2,
-                y: (y1 + y2)/2
-            };
+            return { x: (x1 + x2)/2, y: (y1 + y2)/2 };
         }
         function pinchZoom(ratio, centerTouch) {
             const rect = canvas.getBoundingClientRect();
@@ -570,10 +562,9 @@
             draw();
         }
 
-        // Replaces the old "click" event for desktop
-        // We call this from "mouseup" if the user didn't pan
+        // Called from "mouseup" if not panned (desktop) or single-tap (mobile)
         function handleCanvasClick(px, py) {
-            let mc = screenToModel(px, py);
+            const mc = screenToModel(px, py);
             if (config.isSnap) {
                 mc.x = snapInModelSpace(mc.x);
                 mc.y = snapInModelSpace(mc.y);
@@ -684,7 +675,7 @@
             draw();
         }
 
-        // Basic conversions
+        // Utilities
         function screenToModel(sx, sy) {
             const mx = (sx - config.originX) / config.scaleFactor;
             const my = (config.originY - sy) / config.scaleFactor;
@@ -714,7 +705,7 @@
             }
             return (minDist <= tol) ? closestId : null;
         }
-        // Find closest member within tolerance
+        // Find closest member
         function findClosestMember(mX, mY, tol=10) {
             let closestId = null, minDist = Infinity;
             for (const mid in model.members) {
@@ -733,7 +724,6 @@
             }
             return (minDist <= tol) ? closestId : null;
         }
-        // Dist from point to segment
         function pointToSegmentDist(px, py, x1, y1, x2, y2) {
             const dx = x2 - x1, dy = y2 - y1;
             const len2 = dx*dx + dy*dy;
@@ -747,7 +737,6 @@
             return Math.hypot(px - cx, py - cy);
         }
 
-        // History
         function pushHistory() {
             const snapshot = JSON.parse(JSON.stringify(model));
             history.push(snapshot);
@@ -869,18 +858,22 @@
 
         function drawGrid() {
             ctx.save();
+
+            // Visible corners in model coords
             const topLeft = screenToModel(0, 0);
             const bottomRight = screenToModel(canvas.width, canvas.height);
 
+            // Minor lines from xStart..xEnd, yStart..yEnd
             const xStart = Math.floor(topLeft.x / config.gridSpacing) * config.gridSpacing;
-            const xEnd = Math.ceil(bottomRight.x / config.gridSpacing) * config.gridSpacing;
+            const xEnd   = Math.ceil(bottomRight.x / config.gridSpacing) * config.gridSpacing;
             const yStart = Math.floor(bottomRight.y / config.gridSpacing) * config.gridSpacing;
-            const yEnd = Math.ceil(topLeft.y / config.gridSpacing) * config.gridSpacing;
+            const yEnd   = Math.ceil(topLeft.y / config.gridSpacing) * config.gridSpacing;
 
+            // Draw minor lines
             ctx.strokeStyle = "#e0e0e0";
             ctx.lineWidth = 0.5;
             
-            // vertical
+            // vertical minor
             for (let x = xStart; x <= xEnd; x += config.gridSpacing) {
                 const sx = modelToScreen(x, 0).x;
                 ctx.beginPath();
@@ -888,7 +881,7 @@
                 ctx.lineTo(sx, canvas.height);
                 ctx.stroke();
             }
-            // horizontal
+            // horizontal minor
             for (let y = yStart; y <= yEnd; y += config.gridSpacing) {
                 const sy = modelToScreen(0, y).y;
                 ctx.beginPath();
@@ -897,18 +890,26 @@
                 ctx.stroke();
             }
 
-            // major lines
-            const majorSpacing = 5 * config.gridSpacing;
+            // Major lines at multiples of 5 m (always)
+            const majorSpacing = 5; // fixed 5 m
             ctx.strokeStyle = "#d0d0d0";
             ctx.lineWidth = 0.8;
-            for (let x = Math.floor(xStart / majorSpacing) * majorSpacing; x <= xEnd; x += majorSpacing) {
+
+            // vertical major
+            const xStartMaj = Math.floor(topLeft.x / majorSpacing) * majorSpacing;
+            const xEndMaj   = Math.ceil(bottomRight.x / majorSpacing) * majorSpacing;
+            for (let x = xStartMaj; x <= xEndMaj; x += majorSpacing) {
                 const sx = modelToScreen(x, 0).x;
                 ctx.beginPath();
                 ctx.moveTo(sx, 0);
                 ctx.lineTo(sx, canvas.height);
                 ctx.stroke();
             }
-            for (let y = Math.floor(yStart / majorSpacing) * majorSpacing; y <= yEnd; y += majorSpacing) {
+
+            // horizontal major
+            const yStartMaj = Math.floor(bottomRight.y / majorSpacing) * majorSpacing;
+            const yEndMaj   = Math.ceil(topLeft.y / majorSpacing) * majorSpacing;
+            for (let y = yStartMaj; y <= yEndMaj; y += majorSpacing) {
                 const sy = modelToScreen(0, y).y;
                 ctx.beginPath();
                 ctx.moveTo(0, sy);
@@ -916,19 +917,23 @@
                 ctx.stroke();
             }
 
-            // axes
+            // Axes
             ctx.strokeStyle = "#666";
             ctx.lineWidth = 1.5;
+
+            // X-axis
             ctx.beginPath();
             ctx.moveTo(0, config.originY);
             ctx.lineTo(canvas.width, config.originY);
             ctx.stroke();
+
+            // Y-axis
             ctx.beginPath();
             ctx.moveTo(config.originX, 0);
             ctx.lineTo(config.originX, canvas.height);
             ctx.stroke();
-            
-            // axis labels
+
+            // Axis labels
             ctx.font = "bold 14px Arial";
             ctx.fillStyle = "#333";
             ctx.textAlign = "center";
@@ -940,40 +945,45 @@
             ctx.fillText("Y (m)", 0, 0);
             ctx.restore();
 
-            // numeric labels
+            // Optional numeric labels for the minor lines
             ctx.font = "12px Arial";
             for (let x = xStart; x <= xEnd; x += config.gridSpacing) {
                 if (Math.abs(x) < 0.001) continue;
                 const sx = modelToScreen(x, 0).x;
-                if (Math.abs(x % majorSpacing) < 0.001) {
-                    ctx.fillStyle = "#222";
-                    ctx.textAlign = "center";
-                    ctx.fillText(`${x.toFixed(0)}m`, sx, config.originY + 20);
-                } else if (config.gridSpacing >= 0.5) {
-                    ctx.fillStyle = "#777";
-                    ctx.fillText(`${x.toFixed(1)}`, sx, config.originY + 15);
-                }
+                ctx.fillStyle = "#777";
+                ctx.textAlign = "center";
+                ctx.fillText(`${x.toFixed(1)}`, sx, config.originY + 15);
             }
             for (let y = yStart; y <= yEnd; y += config.gridSpacing) {
                 if (Math.abs(y) < 0.001) continue;
                 const sy = modelToScreen(0, y).y;
-                if (Math.abs(y % majorSpacing) < 0.001) {
-                    ctx.fillStyle = "#222";
-                    ctx.textAlign = "right";
-                    ctx.fillText(`${y.toFixed(0)}m`, config.originX - 10, sy + 4);
-                } else if (config.gridSpacing >= 0.5) {
-                    ctx.fillStyle = "#777";
-                    ctx.fillText(`${y.toFixed(1)}`, config.originX - 5, sy + 3);
-                }
+                ctx.fillStyle = "#777";
+                ctx.textAlign = "right";
+                ctx.fillText(`${y.toFixed(1)}`, config.originX - 5, sy + 3);
             }
-            
-            // origin label
+
+            // Now numeric labels for the major lines in a darker color
+            ctx.fillStyle = "#222";
+            for (let x = xStartMaj; x <= xEndMaj; x += majorSpacing) {
+                if (Math.abs(x) < 0.001) continue;
+                const sx = modelToScreen(x, 0).x;
+                ctx.textAlign = "center";
+                ctx.fillText(`${x.toFixed(0)}m`, sx, config.originY + 20);
+            }
+            for (let y = yStartMaj; y <= yEndMaj; y += majorSpacing) {
+                if (Math.abs(y) < 0.001) continue;
+                const sy = modelToScreen(0, y).y;
+                ctx.textAlign = "right";
+                ctx.fillText(`${y.toFixed(0)}m`, config.originX - 10, sy + 4);
+            }
+
+            // Origin label
             ctx.fillStyle = "#000";
             ctx.font = "bold 12px Arial";
             ctx.textAlign = "left";
             ctx.fillText("(0,0)", config.originX + 5, config.originY - 5);
-            
-            // top-left grid info
+
+            // Show current minor spacing top-left
             ctx.fillStyle = "rgba(0,0,0,0.6)";
             ctx.fillRect(10, 10, 160, 30);
             ctx.fillStyle = "white";
@@ -1065,6 +1075,7 @@
                         ctx.restore();
                         break;
                     case "roller_x":
+                        // left pointing triangle
                         ctx.beginPath();
                         ctx.moveTo(0, 0);
                         ctx.lineTo(-supportPix, -supportPix/2);
@@ -1073,6 +1084,7 @@
                         ctx.fill();
                         break;
                     case "roller_y":
+                        // up pointing triangle
                         ctx.beginPath();
                         ctx.moveTo(0, 0);
                         ctx.lineTo(-supportPix/2, supportPix);
@@ -1260,6 +1272,7 @@
             ctx.fill();
         }
 
+        // initial
         draw();
         updateModelStats();
     </script>
