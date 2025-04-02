@@ -898,7 +898,7 @@
             }
 
             // major lines
-            const majorSpacing = Math.max(5 * config.gridSpacing, 1);
+            const majorSpacing = 5 * config.gridSpacing;
             ctx.strokeStyle = "#d0d0d0";
             ctx.lineWidth = 0.8;
             for (let x = Math.floor(xStart / majorSpacing) * majorSpacing; x <= xEnd; x += majorSpacing) {
