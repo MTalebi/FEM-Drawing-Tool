@@ -286,8 +286,8 @@
         });
         homeBtn.addEventListener('click', () => {
             config.scaleFactor = 30;
-            config.originX = 0;
-            config.originY = canvas.height;
+            config.originX = 50;
+            config.originY = canvas.height - 50;
             draw();
         });
 
@@ -810,6 +810,28 @@
                 if (len > maxMemberLength) maxMemberLength = len;
             }
         }
+        
+        let avgMemberLength = 0;        
+        // Similar to updateMaxMemberLength, but computes AVERAGE length.
+        function updateAvgMemberLength() {
+            let totalLength = 0;
+            let count = 0;
+        
+            for (const mid in model.members) {
+                const mem = model.members[mid];
+                const sn = model.nodes[mem.startNode];
+                const en = model.nodes[mem.endNode];
+                if (!sn || !en) continue;
+                const dx = en.x - sn.x;
+                const dy = en.y - sn.y;
+                const len = Math.sqrt(dx*dx + dy*dy);
+                totalLength += len;
+                count++;
+            }
+
+            // If we have no members, default to 0
+            avgMemberLength = (count > 0) ? (totalLength / count) : 0;
+        }
 
         // Main drawing
         function draw() {
@@ -1042,7 +1064,8 @@
         }
 
         function drawSupports() {
-            const s = (maxMemberLength>0) ? Math.max(0.5, maxMemberLength/9) : 10;
+            // Use the AVERAGE member length (not the max).
+            const s = (avgMemberLength > 0) ? Math.max(0.5, avgMemberLength / 9) : 10;
             const supportPix = s * config.scaleFactor;
             for (const node_id in model.supports) {
                 const sup = model.supports[node_id];
