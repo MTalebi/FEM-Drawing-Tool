@@ -86,9 +86,9 @@
         <!-- Left panel -->
         <div class="sidebar">
             <h2>Structural FEM Tool</h2>
-            <!-- Developer name right after title -->
             <p><em>By: Mohammad Talebi-Kalaleh</em></p>
-            
+            <p><em>mtalebi.com</em></p>
+
             <!-- Mode selection -->
             <div class="section">
                 <strong>Mode</strong>
@@ -136,7 +136,7 @@
                     
                     <!-- Uniform Load Value -->
                     <div id="uniform-load-value">
-                        <label>Load Value (N or N/m):</label><br>
+                        <label>Load Value:</label><br>
                         <input type="number" id="loadValue" value="-1000"><br>
                     </div>
                     
@@ -157,10 +157,8 @@
                 <label>Grid spacing (meters):</label><br>
                 <select id="gridSpacingSelect">
                     <option value="0.1">0.1 m</option>
-                    <!-- Make 0.5 the default selected option -->
-                    <option value="0.5" selected>0.5 m</option>
-                    <option value="1">1 m</option>
-                    <option value="2">2 m</option>
+                    <option value="0.5">0.5 m</option>
+                    <option value="1" selected>1 m</option>
                     <option value="5">5 m</option>
                 </select>
             </div>
@@ -220,7 +218,7 @@
             nuStartVal: -1000,
             nuEndVal: -500,
             isSnap: true,
-            gridSpacing: 0.5,     // minor grid spacing = 0.5 by default
+            gridSpacing: 1,     // minor grid spacing = 1 by default
             scaleFactor: 30,
             originX: 0,          // bottom-left
             originY: 0
