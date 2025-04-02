@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -218,8 +219,8 @@
             isSnap: true,
             gridSpacing: 1,     // minor grid spacing = 1 by default
             scaleFactor: 30,
-            originX: 50,          
-            originY: -50
+            originX: 0,          
+            originY: 0
         };
 
         let tempSelectedNode = null;
@@ -286,8 +287,8 @@
         });
         homeBtn.addEventListener('click', () => {
             config.scaleFactor = 30;
-            config.originX = 0;
-            config.originY = canvas.height;
+            config.originX = 50;
+            config.originY = canvas.height-50;
             draw();
         });
 
