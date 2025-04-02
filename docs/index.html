@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <!-- Ensures responsive behavior on mobile -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Structural FEM Tool</title>
     <style>
@@ -49,7 +50,20 @@
             border-top: 1px solid #ccc;
             padding-top: 10px;
         }
-        
+
+        /* --- Added media query for mobile responsiveness --- */
+        @media (max-width: 600px) {
+            .container {
+                flex-direction: column;
+                height: auto; /* Let it grow naturally */
+            }
+            .sidebar {
+                width: 100%;
+            }
+            .canvas-container {
+                height: 60vh; /* Give canvas a reasonable height on mobile */
+            }
+        }
     </style>
 </head>
 <body>
@@ -956,7 +970,6 @@
                     const fx = ld.values[0];
                     const fy = ld.values[1];
                     
-                    // we interpret negative x => arrow left, negative y => arrow down, etc.
                     // arrow length in meters:
                     const arrLenM = arrowLenPointUniform;
                     // convert to screen
@@ -969,9 +982,8 @@
                     }
                     // y direction
                     if (Math.abs(fy) > 1e-6) {
-                        // if negative => arrow is downward on screen
+                        // negative => arrow is downward on screen
                         dy = (fy < 0) ? arrLenPx : -arrLenPx; 
-                        // (remember screen Y is inverted, so negative means up)
                     }
                     const startX = sc.x - dx;
                     const startY = sc.y - dy;
@@ -1068,7 +1080,6 @@
                         const absValT = Math.abs(valT);
 
                         // figure out arrow length in px from min to max
-                        // We map [min(absStart,absEnd) -> max(absStart,absEnd)] onto [minPx -> maxPx]
                         const absStart = Math.abs(startVal);
                         const absEnd   = Math.abs(endVal);
                         const dataMin = Math.min(absStart, absEnd);
@@ -1087,7 +1098,6 @@
                         if (dir === "x") {
                             ax = (valT < 0) ? -arrowPx : arrowPx;
                         } else {
-                            // negative => arrow downward in screen
                             ay = (valT < 0) ? arrowPx : -arrowPx;
                         }
                         drawArrow(sc.x - ax, sc.y - ay, sc.x, sc.y, "red");
