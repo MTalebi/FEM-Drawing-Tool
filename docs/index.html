@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <!-- Ensures responsive behavior on mobile -->
+    <!-- Ensure responsive behavior on mobile -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Structural FEM Tool</title>
     <style>
@@ -16,7 +16,7 @@
             height: 100vh;
         }
         .sidebar {
-            width: 300px;
+            width: 300px; /* Default for larger screens */
             background: #e6e6e6;
             padding: 10px;
             overflow-y: auto;
@@ -51,17 +51,15 @@
             padding-top: 10px;
         }
 
-        /* --- Added media query for mobile responsiveness --- */
+        /* --- Minimal media query: use 25%/75% split on screens < 600px --- */
         @media (max-width: 600px) {
-            .container {
-                flex-direction: column;
-                height: auto; /* Let it grow naturally */
-            }
             .sidebar {
-                width: 100%;
+                width: 25vw; /* ~25% of the screen width */
+                min-width: 25vw;
             }
             .canvas-container {
-                height: 60vh; /* Give canvas a reasonable height on mobile */
+                width: 75vw; /* ~75% for the canvas */
+                flex: none;  /* Let width override flex:1 */
             }
         }
     </style>
@@ -223,7 +221,12 @@
 
         // Set canvas size and origin
         function resizeCanvas() {
-            canvas.width = window.innerWidth - 320;
+            // Minimal addition: use 75% width on screens <= 600px
+            if (window.innerWidth <= 600) {
+                canvas.width = window.innerWidth * 0.75;
+            } else {
+                canvas.width = window.innerWidth - 300; // 300px sidebar for wider screens
+            }
             canvas.height = window.innerHeight;
             
             // Set origin at bottom-left with some padding
@@ -426,7 +429,7 @@
                 const startN = model.nodes[mem.startNode];
                 const endN = model.nodes[mem.endNode];
                 if (!startN || !endN) continue;
-                // First convert the test point and the endpoints to screen
+                // Convert the test point and the endpoints to screen space
                 const sPt = modelToScreen(mX, mY);
                 const sA = modelToScreen(startN.x, startN.y);
                 const sB = modelToScreen(endN.x, endN.y);
@@ -898,12 +901,11 @@
                         ctx.lineWidth = 1;
                         const hatchSpacing = supportPix/8;
                         for (let i = 0; i <= supportPix; i += hatchSpacing) {
-                            // horizontal line
                             ctx.beginPath();
                             ctx.moveTo(-supportPix/2, -supportPix/2 + i);
                             ctx.lineTo(supportPix/2, -supportPix/2 + i);
                             ctx.stroke();
-                            // vertical line
+
                             ctx.beginPath();
                             ctx.moveTo(-supportPix/2 + i, -supportPix/2);
                             ctx.lineTo(-supportPix/2 + i, supportPix/2);
@@ -970,9 +972,7 @@
                     const fx = ld.values[0];
                     const fy = ld.values[1];
                     
-                    // arrow length in meters:
                     const arrLenM = arrowLenPointUniform;
-                    // convert to screen
                     const arrLenPx = arrLenM * config.scaleFactor;
 
                     let dx = 0, dy = 0;
@@ -1012,20 +1012,14 @@
                     const dxm = en.x - sn.x;
                     const dym = en.y - sn.y;
                     const length = Math.sqrt(dxm*dxm + dym*dym);
-                    const startS = modelToScreen(sn.x, sn.y);
-                    const endS = modelToScreen(en.x, en.y);
 
-                    // arrow length in px for uniform
                     const arrLenPx = arrowLenPointUniform * config.scaleFactor;
-
-                    // The load vector (fx, fy)
                     const fx = ld.values[0];
                     const fy = ld.values[1];
 
                     // 7 arrows at t=0..1 in steps of 1/6
                     for (let i=0; i<distributedPositions.length; i++){
                         const t = distributedPositions[i];
-                        // param in model coords
                         const xM = sn.x + t*dxm;
                         const yM = sn.y + t*dym;
                         const sc = modelToScreen(xM, yM);
@@ -1065,7 +1059,6 @@
                     const dym = en.y - sn.y;
                     const length = Math.sqrt(dxm*dxm + dym*dym);
 
-                    // arrow length range
                     const minPx = arrowLenMinNonuniform * config.scaleFactor;
                     const maxPx = arrowLenMaxNonuniform * config.scaleFactor;
 
@@ -1076,7 +1069,7 @@
                     // For 7 arrows
                     for (let i=0; i<distributedPositions.length; i++){
                         const t = distributedPositions[i];
-                        const valT = startVal + t*(endVal - startVal); // linear interpolation
+                        const valT = startVal + t*(endVal - startVal); 
                         const absValT = Math.abs(valT);
 
                         // figure out arrow length in px from min to max
@@ -1084,8 +1077,8 @@
                         const absEnd   = Math.abs(endVal);
                         const dataMin = Math.min(absStart, absEnd);
                         const dataMax = Math.max(absStart, absEnd);
-                        const range = Math.max(dataMax - dataMin, 1e-6); // avoid zero
-                        const fraction = (absValT - dataMin)/range; // in [0..1]
+                        const range = Math.max(dataMax - dataMin, 1e-6);
+                        const fraction = (absValT - dataMin)/range; 
                         let arrowPx = minPx + fraction*(maxPx - minPx);
                         
                         // Where to place the arrow
@@ -1093,7 +1086,6 @@
                         const yM = sn.y + t*dym;
                         const sc = modelToScreen(xM, yM);
 
-                        // direction
                         let ax = 0, ay = 0;
                         if (dir === "x") {
                             ax = (valT < 0) ? -arrowPx : arrowPx;
