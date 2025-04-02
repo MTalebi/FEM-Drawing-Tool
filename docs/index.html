@@ -219,7 +219,7 @@
             nuStartVal: -1000,   
             nuEndVal: -500,      
             isSnap: true,
-            gridSpacing: 1,      
+            gridSpacing: 0.5,      
             scaleFactor: 30,     
             originX: 0,          
             originY: 0           
@@ -269,7 +269,7 @@
             canvas.height = window.innerHeight;
             
             config.originX = 50;
-            config.originY = canvas.height - 50;
+            config.originY = canvas.height - 50 - 10 * config.scaleFactor;
             config.originX = Math.round(config.originX / config.scaleFactor) * config.scaleFactor;
             config.originY = Math.round(config.originY / config.scaleFactor) * config.scaleFactor;
             
