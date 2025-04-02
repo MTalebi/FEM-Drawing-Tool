@@ -29,7 +29,7 @@
         canvas {
             border: 1px solid #ccc;
             /* Needed so we can handle pinch/touch ourselves */
-            touch-action: none;
+            touch-action: none; /* Prevents default scroll/zoom so we can handle touches */
         }
         h2 {
             margin-top: 0;
@@ -199,11 +199,10 @@
     <script>
         // Main model data
         const model = {
-            // All coordinates below should be in *meters*.
-            nodes: {},           // { nodeId: { x, y } }
-            members: {},         // { memId: { startNode, endNode, type: beam/truss } }
-            supports: {},        // { nodeId: { type: fixed/roller_x/roller_y/hinge } }
-            loads: {},           // { loadId: { ... load data ... } }
+            nodes: {},
+            members: {},
+            supports: {},
+            loads: {},
             nodeCounter: 0,
             memberCounter: 0,
             loadCounter: 0
@@ -211,58 +210,54 @@
 
         // Configuration
         const config = {
-            mode: "node",         // node | member | support | load
-            memberType: "beam",   // beam | truss
-            supportType: "fixed", // fixed, roller_x, roller_y, hinge
-            loadType: "point",    // point, uniform, nonuniform
-            loadDir: "y",         // x | y
-            loadValue: -1000,     // for point/uniform
-            nuStartVal: -1000,    // for nonuniform start
-            nuEndVal: -500,       // for nonuniform end
+            mode: "node",        
+            memberType: "beam",  
+            supportType: "fixed",
+            loadType: "point",   
+            loadDir: "y",        
+            loadValue: -1000,    
+            nuStartVal: -1000,   
+            nuEndVal: -500,      
             isSnap: true,
-            gridSpacing: 1,       // in meters
-            scaleFactor: 30,      // pixels per meter (initial zoom)
-            originX: 0,           // X coordinate of origin in screen
-            originY: 0            // Y coordinate of origin in screen
+            gridSpacing: 1,      
+            scaleFactor: 30,     
+            originX: 0,          
+            originY: 0           
         };
 
-        // Temporary selected node for member creation
         let tempSelectedNode = null;
-
-        // Store the max member length (in meters) to scale arrow/support sizes
         let maxMemberLength = 0;
 
-        // History stack for undo
+        // Undo history
         const history = [];
         const maxHistory = 50;
 
-        // Canvas and context
+        // Canvas
         const canvas = document.getElementById('femCanvas');
         const ctx = canvas.getContext('2d');
         
-        // Cursor coordinates (in screen space)
+        // Cursor coords in screen space
         let cursorX = 0;
         let cursorY = 0;
 
-        // --- Desktop right-click panning variables ---
+        // Desktop right-click panning
         let isRightClickPanning = false;
         let lastPanX = 0;
         let lastPanY = 0;
 
-        // --- Mobile single-finger panning & "tap" detection ---
+        // Mobile single-finger pan / tap logic
         let touchStartX = 0, touchStartY = 0;
-        let hasMovedSignificantly = false;
         let isSingleFingerPanning = false;
-        const MOVE_THRESHOLD = 10; // px for deciding pan vs. tap
+        let hasMovedSignificantly = false;
+        const MOVE_THRESHOLD = 10; // px
 
-        // --- Two-finger pinch zoom variables ---
+        // Two-finger pinch to zoom
         let isPinchZooming = false;
         let lastPinchDist = 0;
         let lastPinchCenter = { x: 0, y: 0 };
 
-        // Set canvas size and origin
+        // Adjust canvas size
         function resizeCanvas() {
-            // 75% width on screens <= 600px, otherwise 300px sidebar
             if (window.innerWidth <= 600) {
                 canvas.width = window.innerWidth * 0.75;
             } else {
@@ -270,11 +265,8 @@
             }
             canvas.height = window.innerHeight;
             
-            // Set origin at bottom-left with some padding
             config.originX = 50;
             config.originY = canvas.height - 50;
-            
-            // Optionally snap origin to the grid in screen coordinates
             config.originX = Math.round(config.originX / config.scaleFactor) * config.scaleFactor;
             config.originY = Math.round(config.originY / config.scaleFactor) * config.scaleFactor;
             
@@ -283,47 +275,37 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // --- Zoom/Home UI Buttons ---
+        // Zoom/Home UI
         const zoomInBtn = document.getElementById('zoomInBtn');
         const zoomOutBtn = document.getElementById('zoomOutBtn');
         const homeBtn = document.getElementById('homeBtn');
 
         zoomInBtn.addEventListener('click', () => {
-            zoomAboutCenter(1.2); // 20% zoom in
+            zoomAboutCenter(1.2);
         });
         zoomOutBtn.addEventListener('click', () => {
-            zoomAboutCenter(0.8); // 20% zoom out
+            zoomAboutCenter(0.8);
         });
         homeBtn.addEventListener('click', () => {
-            // Reset to original scale & origin
             config.scaleFactor = 30;
             resizeCanvas();
         });
 
-        function zoomAboutCenter(scaleFactorDelta) {
-            // Zoom about the *canvas center* in screen coords
+        function zoomAboutCenter(scale) {
             const centerX = canvas.width / 2;
             const centerY = canvas.height / 2;
-
-            // Convert that center to model coords
             const modelBefore = screenToModel(centerX, centerY);
 
-            // Apply scale
-            config.scaleFactor *= scaleFactorDelta;
-            // clamp the scaleFactor
-            config.scaleFactor = Math.min(Math.max(config.scaleFactor, 5), 500);
+            config.scaleFactor *= scale;
+            config.scaleFactor = Math.max(5, Math.min(500, config.scaleFactor));
 
-            // Convert the same center back to screen coords, see how it changed
             const screenAfter = modelToScreen(modelBefore.x, modelBefore.y);
-
-            // Shift origin so that the center remains the same point in model coords
             config.originX += (centerX - screenAfter.x);
             config.originY += (centerY - screenAfter.y);
-
             draw();
         }
 
-        // --- UI references ---
+        // Sidebar / UI references
         const modeRadios = document.querySelectorAll('input[name="mode"]');
         const memberTypeRadios = document.querySelectorAll('input[name="memType"]');
         const supportTypeRadios = document.querySelectorAll('input[name="supportType"]');
@@ -342,23 +324,14 @@
         const modelStats = document.getElementById('model-stats');
 
         function updateOptionsVisibility() {
-            // fade out / enable sections based on mode
             document.querySelector('.member-options > div').classList.toggle('faded', config.mode !== 'member');
             document.querySelector('.support-options > div').classList.toggle('faded', config.mode !== 'support');
             document.querySelector('.load-options > div').classList.toggle('faded', config.mode !== 'load');
             
-            // enable/disable inputs
-            document.querySelectorAll('.member-options input').forEach(input => {
-                input.disabled = (config.mode !== 'member');
-            });
-            document.querySelectorAll('.support-options input').forEach(input => {
-                input.disabled = (config.mode !== 'support');
-            });
-            document.querySelectorAll('.load-options input').forEach(input => {
-                input.disabled = (config.mode !== 'load');
-            });
+            document.querySelectorAll('.member-options input').forEach(i => i.disabled = (config.mode !== 'member'));
+            document.querySelectorAll('.support-options input').forEach(i => i.disabled = (config.mode !== 'support'));
+            document.querySelectorAll('.load-options input').forEach(i => i.disabled = (config.mode !== 'load'));
             
-            // Show/hide nonuniform fields
             if (config.loadType === 'nonuniform') {
                 uniformLoadValueDiv.style.display = 'none';
                 nonuniformLoadValuesDiv.style.display = 'block';
@@ -367,53 +340,32 @@
                 nonuniformLoadValuesDiv.style.display = 'none';
             }
         }
+        updateOptionsVisibility();
 
-        function updateMaxMemberLength() {
-            // Recompute maxMemberLength based on all existing members (in meters).
-            maxMemberLength = 0;
-            for (const mid in model.members) {
-                const mem = model.members[mid];
-                const sn = model.nodes[mem.startNode];
-                const en = model.nodes[mem.endNode];
-                if (!sn || !en) continue;
-                const dx = en.x - sn.x;
-                const dy = en.y - sn.y;
-                const len = Math.sqrt(dx*dx + dy*dy);
-                if (len > maxMemberLength) maxMemberLength = len;
-            }
-        }
-
-        // Radio changes
-        modeRadios.forEach(radio => {
-            radio.addEventListener('change', () => {
-                if (radio.checked) {
-                    config.mode = radio.value;
+        modeRadios.forEach(r => {
+            r.addEventListener('change', () => {
+                if (r.checked) {
+                    config.mode = r.value;
                     updateOptionsVisibility();
                 }
             });
         });
-        memberTypeRadios.forEach(radio => {
-            radio.addEventListener('change', () => {
-                if (radio.checked) config.memberType = radio.value;
-            });
+        memberTypeRadios.forEach(r => {
+            r.addEventListener('change', () => { if (r.checked) config.memberType = r.value; });
         });
-        supportTypeRadios.forEach(radio => {
-            radio.addEventListener('change', () => {
-                if (radio.checked) config.supportType = radio.value;
-            });
+        supportTypeRadios.forEach(r => {
+            r.addEventListener('change', () => { if (r.checked) config.supportType = r.value; });
         });
-        loadTypeRadios.forEach(radio => {
-            radio.addEventListener('change', () => {
-                if (radio.checked) {
-                    config.loadType = radio.value;
+        loadTypeRadios.forEach(r => {
+            r.addEventListener('change', () => {
+                if (r.checked) {
+                    config.loadType = r.value;
                     updateOptionsVisibility();
                 }
             });
         });
-        loadDirRadios.forEach(radio => {
-            radio.addEventListener('change', () => {
-                if (radio.checked) config.loadDir = radio.value;
-            });
+        loadDirRadios.forEach(r => {
+            r.addEventListener('change', () => { if (r.checked) config.loadDir = r.value; });
         });
 
         loadValueInput.addEventListener('change', () => {
@@ -437,44 +389,36 @@
                 draw();
             }
         });
-
         undoBtn.addEventListener('click', handleUndo);
         clearBtn.addEventListener('click', handleClear);
         saveBtn.addEventListener('click', handleSave);
 
+        // Prevent default context menu so right-click can pan
+        canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-        // --- Prevent default context menu so right-click can pan ---
-        canvas.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-        });
-
-        // --- Desktop RIGHT-CLICK Panning ---
-        canvas.addEventListener('mousedown', (e) => {
+        // === Desktop Right-Click Panning ===
+        canvas.addEventListener('mousedown', e => {
             if (e.button === 2) { // right-click
                 isRightClickPanning = true;
                 lastPanX = e.clientX;
                 lastPanY = e.clientY;
             }
         });
-        document.addEventListener('mouseup', (e) => {
+        document.addEventListener('mouseup', e => {
             if (e.button === 2) {
                 isRightClickPanning = false;
             }
         });
-        canvas.addEventListener('mousemove', (e) => {
+        canvas.addEventListener('mousemove', e => {
             if (isRightClickPanning) {
                 const dx = e.clientX - lastPanX;
                 const dy = e.clientY - lastPanY;
-                
                 config.originX += dx;
                 config.originY += dy;
-                
                 lastPanX = e.clientX;
                 lastPanY = e.clientY;
-                
-                draw(); // update
+                draw();
             } else {
-                // Just track cursor for coordinate display
                 const rect = canvas.getBoundingClientRect();
                 cursorX = e.clientX - rect.left;
                 cursorY = e.clientY - rect.top;
@@ -482,10 +426,9 @@
             }
         });
 
-        // --- Mobile ONE-FINGER Panning / Tap detection ---
-        canvas.addEventListener('touchstart', (e) => {
-            // If 2 touches => pinch zoom logic below.
-            // If 1 touch => we might be panning or tapping.
+        // === Mobile Touch Events (with preventDefault) ===
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault(); // <--- prevents synthetic "click" later
             if (e.touches.length === 1) {
                 isSingleFingerPanning = false;
                 hasMovedSignificantly = false;
@@ -493,7 +436,7 @@
                 touchStartX = t.clientX;
                 touchStartY = t.clientY;
             }
-            // If 2 touches => start pinch zoom
+            // Two-finger pinch
             if (e.touches.length === 2) {
                 isPinchZooming = true;
                 lastPinchDist = getPinchDistance(e.touches);
@@ -501,39 +444,30 @@
             }
         }, { passive: false });
 
-        canvas.addEventListener('touchmove', (e) => {
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault(); // <--- prevents scrolling or double events
             // Pinch zoom?
             if (isPinchZooming && e.touches.length === 2) {
-                e.preventDefault(); // prevent browser scroll
                 const newDist = getPinchDistance(e.touches);
                 const center = getTouchCenter(e.touches);
-
-                // Zoom ratio
                 const ratio = newDist / lastPinchDist;
                 pinchZoom(ratio, center);
-
-                // Update for next
                 lastPinchDist = newDist;
                 lastPinchCenter = center;
                 return;
             }
-
-            // Otherwise, if 1 finger => potential pan
+            // Single-finger
             if (e.touches.length === 1) {
                 const t = e.touches[0];
                 const dx = t.clientX - touchStartX;
                 const dy = t.clientY - touchStartY;
-                const dist = Math.sqrt(dx*dx + dy*dy);
-                if (dist > MOVE_THRESHOLD) {
-                    // Start panning
-                    e.preventDefault(); // disable scroll
+                if (Math.sqrt(dx*dx + dy*dy) > MOVE_THRESHOLD) {
+                    // pan
                     if (!isSingleFingerPanning) {
-                        // We just "entered" panning
                         isSingleFingerPanning = true;
                         lastPanX = t.clientX;
                         lastPanY = t.clientY;
                     } else {
-                        // Keep panning
                         const ddx = t.clientX - lastPanX;
                         const ddy = t.clientY - lastPanY;
                         config.originX += ddx;
@@ -547,67 +481,58 @@
             }
         }, { passive: false });
 
-        canvas.addEventListener('touchend', (e) => {
-            // If pinch ended
+        canvas.addEventListener('touchend', e => {
+            e.preventDefault();
+            // If we lose a finger from pinch
             if (e.touches.length < 2) {
                 isPinchZooming = false;
             }
-
             // If single-finger ended
             if (e.touches.length === 0 && !hasMovedSignificantly && !isPinchZooming) {
-                // That was a tap => place node / item
+                // That was a "tap"
                 const rect = canvas.getBoundingClientRect();
                 const px = touchStartX - rect.left;
                 const py = touchStartY - rect.top;
                 handleCanvasClick(px, py);
             }
-
             if (e.touches.length === 0) {
                 isSingleFingerPanning = false;
             }
-        });
-        canvas.addEventListener('touchcancel', () => {
-            isSingleFingerPanning = false;
-            isPinchZooming = false;
-        });
+        }, { passive: false });
 
-        // Utility: distance between two touches
+        canvas.addEventListener('touchcancel', e => {
+            e.preventDefault();
+            isPinchZooming = false;
+            isSingleFingerPanning = false;
+        }, { passive: false });
+
+        // Utility for pinch distance
         function getPinchDistance(touches) {
-            const x1 = touches[0].clientX;
-            const y1 = touches[0].clientY;
-            const x2 = touches[1].clientX;
-            const y2 = touches[1].clientY;
+            const x1 = touches[0].clientX, y1 = touches[0].clientY;
+            const x2 = touches[1].clientX, y2 = touches[1].clientY;
             const dx = x2 - x1;
             const dy = y2 - y1;
             return Math.sqrt(dx*dx + dy*dy);
         }
-
-        // Utility: center of two touches
+        // Utility for pinch center
         function getTouchCenter(touches) {
-            const x1 = touches[0].clientX;
-            const y1 = touches[0].clientY;
-            const x2 = touches[1].clientX;
-            const y2 = touches[1].clientY;
+            const x1 = touches[0].clientX, y1 = touches[0].clientY;
+            const x2 = touches[1].clientX, y2 = touches[1].clientY;
             return {
-                x: (x1 + x2) / 2,
-                y: (y1 + y2) / 2
+                x: (x1 + x2)/2,
+                y: (y1 + y2)/2
             };
         }
-
-        // Perform pinch zoom around the two-finger midpoint
+        // Zoom from pinch ratio
         function pinchZoom(ratio, centerTouch) {
-            // 1) Convert that center from screen -> model
             const rect = canvas.getBoundingClientRect();
             const centerX = centerTouch.x - rect.left;
             const centerY = centerTouch.y - rect.top;
             const modelBefore = screenToModel(centerX, centerY);
 
-            // 2) Update scaleFactor
             config.scaleFactor *= ratio;
-            // clamp
-            config.scaleFactor = Math.min(Math.max(config.scaleFactor, 5), 500);
+            config.scaleFactor = Math.max(5, Math.min(500, config.scaleFactor));
 
-            // 3) figure out how the center has shifted after the new scale
             const screenAfter = modelToScreen(modelBefore.x, modelBefore.y);
             config.originX += (centerX - screenAfter.x);
             config.originY += (centerY - screenAfter.y);
@@ -615,42 +540,21 @@
             draw();
         }
 
-        // Desktop "click" => place node/member/support/load (only if left-click)
-        canvas.addEventListener('click', (e) => {
-            // If right-click panning or pinch => skip
+        // Desktop click => place node/member/support/load (only if left-click)
+        canvas.addEventListener('click', e => {
+            // skip if right-click panning or pinch in progress
             if (isRightClickPanning || isPinchZooming || isSingleFingerPanning) {
                 return;
             }
-            // Only handle left-click
-            if (e.button !== 0) return;
+            if (e.button !== 0) return; // only left-click
 
             const rect = canvas.getBoundingClientRect();
-            const pixelX = e.clientX - rect.left;
-            const pixelY = e.clientY - rect.top;
-            handleCanvasClick(pixelX, pixelY);
+            const px = e.clientX - rect.left;
+            const py = e.clientY - rect.top;
+            handleCanvasClick(px, py);
         });
 
-        // Convert screen coords → model coords (meters)
-        function screenToModel(sx, sy) {
-            const mx = (sx - config.originX) / config.scaleFactor;
-            const my = (config.originY - sy) / config.scaleFactor; // invert y
-            return {x: mx, y: my};
-        }
-
-        // Convert model coords (meters) → screen coords
-        function modelToScreen(mx, my) {
-            const sx = config.originX + mx * config.scaleFactor;
-            const sy = config.originY - my * config.scaleFactor;
-            return {x: sx, y: sy};
-        }
-
-        // Snap a model coordinate to the nearest grid step
-        function snapInModelSpace(coord) {
-            return Math.round(coord / config.gridSpacing) * config.gridSpacing;
-        }
-
         function handleCanvasClick(px, py) {
-            // Convert screen to model
             let mc = screenToModel(px, py);
             if (config.isSnap) {
                 mc.x = snapInModelSpace(mc.x);
@@ -669,17 +573,12 @@
                     tempSelectedNode = closest;
                 } else {
                     if (closest !== tempSelectedNode) {
-                        // Check for duplicates
-                        const startN = tempSelectedNode;
-                        const endN = closest;
                         let duplicate = false;
                         for (const mid in model.members) {
-                            const existing = model.members[mid];
-                            const s = existing.startNode;
-                            const e = existing.endNode;
+                            const m = model.members[mid];
                             if (
-                                (s === startN && e === endN) ||
-                                (s === endN && e === startN)
+                                (m.startNode === tempSelectedNode && m.endNode === closest) ||
+                                (m.startNode === closest && m.endNode === tempSelectedNode)
                             ) {
                                 duplicate = true;
                                 break;
@@ -689,8 +588,8 @@
                             pushHistory();
                             const memId = "M" + (++model.memberCounter);
                             model.members[memId] = {
-                                startNode: startN,
-                                endNode: endN,
+                                startNode: tempSelectedNode,
+                                endNode: closest,
                                 type: config.memberType
                             };
                             updateMaxMemberLength();
@@ -730,14 +629,12 @@
                 else if (config.loadType === "uniform" || config.loadType === "nonuniform") {
                     const mid = findClosestMember(mc.x, mc.y);
                     if (!mid) return;
-                    // no distributed load on truss
                     if (model.members[mid].type === "truss") {
                         console.log("Cannot assign distributed load on truss.");
                         return;
                     }
                     pushHistory();
                     const lid = "L" + (++model.loadCounter);
-                    
                     if (config.loadType === "uniform") {
                         if (config.loadDir === "x") {
                             model.loads[lid] = {
@@ -769,53 +666,62 @@
             draw();
         }
 
-        // Returns the ID of the closest node (in model space) within 'tolerance' (screen px)
-        function findClosestNode(mX, mY, tolerancePx=10) {
-            let closestId = null;
-            let minDist = Infinity;
+        // Convert screen coords → model coords
+        function screenToModel(sx, sy) {
+            const mx = (sx - config.originX) / config.scaleFactor;
+            const my = (config.originY - sy) / config.scaleFactor;
+            return {x: mx, y: my};
+        }
+        // Convert model coords → screen coords
+        function modelToScreen(mx, my) {
+            const sx = config.originX + mx * config.scaleFactor;
+            const sy = config.originY - my * config.scaleFactor;
+            return {x: sx, y: sy};
+        }
+        // Snap
+        function snapInModelSpace(coord) {
+            return Math.round(coord / config.gridSpacing) * config.gridSpacing;
+        }
+
+        // Find closest node within screen px tolerance
+        function findClosestNode(mX, mY, tol=10) {
+            let closestId = null, minDist = Infinity;
             for (const nid in model.nodes) {
                 const nd = model.nodes[nid];
-                const {x: s1, y: s2} = modelToScreen(nd.x, nd.y);
-                const {x: s3, y: s4} = modelToScreen(mX, mY);
-                const screenDist = Math.sqrt((s1 - s3)**2 + (s2 - s4)**2);
-                if (screenDist < minDist) {
-                    minDist = screenDist;
+                const s1 = modelToScreen(nd.x, nd.y);
+                const s2 = modelToScreen(mX, mY);
+                const d = Math.hypot(s1.x - s2.x, s1.y - s2.y);
+                if (d < minDist) {
+                    minDist = d;
                     closestId = nid;
                 }
             }
-            if (minDist <= tolerancePx) return closestId;
-            return null;
+            return (minDist <= tol) ? closestId : null;
         }
-
-        // Returns the ID of the closest member within 'tolerance' in screen px
-        function findClosestMember(mX, mY, tolerancePx=10) {
-            let closestId = null;
-            let minDist = Infinity;
+        // Find closest member within tolerance
+        function findClosestMember(mX, mY, tol=10) {
+            let closestId = null, minDist = Infinity;
             for (const mid in model.members) {
                 const mem = model.members[mid];
-                const startN = model.nodes[mem.startNode];
-                const endN = model.nodes[mem.endNode];
-                if (!startN || !endN) continue;
+                const sn = model.nodes[mem.startNode];
+                const en = model.nodes[mem.endNode];
+                if (!sn || !en) continue;
                 const sPt = modelToScreen(mX, mY);
-                const sA = modelToScreen(startN.x, startN.y);
-                const sB = modelToScreen(endN.x, endN.y);
-
-                const distScreen = pointToSegmentDist(sPt.x, sPt.y, sA.x, sA.y, sB.x, sB.y);
-                if (distScreen < minDist) {
-                    minDist = distScreen;
+                const sA = modelToScreen(sn.x, sn.y);
+                const sB = modelToScreen(en.x, en.y);
+                const dist = pointToSegmentDist(sPt.x, sPt.y, sA.x, sA.y, sB.x, sB.y);
+                if (dist < minDist) {
+                    minDist = dist;
                     closestId = mid;
                 }
             }
-            return (minDist <= tolerancePx) ? closestId : null;
+            return (minDist <= tol) ? closestId : null;
         }
-
-        // distance from point(px,py) to segment(x1,y1)-(x2,y2)
+        // Dist from point to segment
         function pointToSegmentDist(px, py, x1, y1, x2, y2) {
-            const dx = x2 - x1;
-            const dy = y2 - y1;
+            const dx = x2 - x1, dy = y2 - y1;
             const len2 = dx*dx + dy*dy;
             if (len2 === 0) {
-                // segment is a point
                 return Math.hypot(px - x1, py - y1);
             }
             let t = ((px - x1)*dx + (py - y1)*dy) / len2;
@@ -823,6 +729,24 @@
             const cx = x1 + t*dx;
             const cy = y1 + t*dy;
             return Math.hypot(px - cx, py - cy);
+        }
+
+        function pushHistory() {
+            const snapshot = JSON.parse(JSON.stringify(model));
+            history.push(snapshot);
+            if (history.length > maxHistory) history.shift();
+        }
+        function popHistory() {
+            if (!history.length) {
+                console.log("Nothing to undo.");
+                return;
+            }
+            const last = history.pop();
+            Object.assign(model, last);
+            tempSelectedNode = null;
+            updateMaxMemberLength();
+            updateModelStats();
+            draw();
         }
 
         function handleUndo() {
@@ -845,8 +769,6 @@
         }
 
         function handleSave() {
-            // Output in meters, with the actual signed loads
-            // Model is already in meters, so just export
             const exportData = {
                 nodes: model.nodes,
                 members: model.members,
@@ -863,25 +785,6 @@
             URL.revokeObjectURL(url);
         }
 
-        // History
-        function pushHistory() {
-            const snapshot = JSON.parse(JSON.stringify(model));
-            history.push(snapshot);
-            if (history.length > maxHistory) history.shift();
-        }
-        function popHistory() {
-            if (history.length === 0) {
-                console.log("Nothing to undo.");
-                return;
-            }
-            const last = history.pop();
-            Object.assign(model, last);
-            tempSelectedNode = null;
-            updateMaxMemberLength();
-            updateModelStats();
-            draw();
-        }
-
         function updateModelStats() {
             modelStats.innerHTML = `
                 Nodes: ${Object.keys(model.nodes).length}<br>
@@ -891,7 +794,20 @@
             `;
         }
 
-        // Drawing
+        function updateMaxMemberLength() {
+            maxMemberLength = 0;
+            for (const mid in model.members) {
+                const mem = model.members[mid];
+                const sn = model.nodes[mem.startNode];
+                const en = model.nodes[mem.endNode];
+                if (!sn || !en) continue;
+                const dx = en.x - sn.x;
+                const dy = en.y - sn.y;
+                const len = Math.sqrt(dx*dx + dy*dy);
+                if (len > maxMemberLength) maxMemberLength = len;
+            }
+        }
+
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (config.isSnap) {
@@ -903,7 +819,6 @@
             drawLoads();
             
             if (tempSelectedNode && config.mode === "member") {
-                // highlight selected node
                 const nd = model.nodes[tempSelectedNode];
                 if (nd) {
                     const {x: sx, y: sy} = modelToScreen(nd.x, nd.y);
@@ -920,153 +835,134 @@
         }
 
         function drawCursorCoordinates() {
-            // Show the model-space coordinates of the current mouse/touch position
             const mc = screenToModel(cursorX, cursorY);
-            
             ctx.font = "12px Arial";
             const text = `(${mc.x.toFixed(2)}m, ${mc.y.toFixed(2)}m)`;
             const pad = 10;
-            const textWidth = ctx.measureText(text).width;
-            const boxHeight = 20;
+            const tw = ctx.measureText(text).width;
+            const boxH = 20;
 
             ctx.fillStyle = "rgba(0,0,0,0.6)";
-            ctx.fillRect(canvas.width - textWidth - pad*2, canvas.height - boxHeight - pad, textWidth + pad*2, boxHeight);
+            ctx.fillRect(canvas.width - tw - pad*2, canvas.height - boxH - pad, tw + pad*2, boxH);
             ctx.fillStyle = "white";
             ctx.textAlign = "center";
-            ctx.fillText(text, canvas.width - textWidth/2 - pad, canvas.height - pad - 5);
+            ctx.fillText(text, canvas.width - tw/2 - pad, canvas.height - pad - 5);
             ctx.textAlign = "left";
         }
 
         function drawGrid() {
             ctx.save();
-            
-            // Visible area corners (in model coords)
             const topLeft = screenToModel(0, 0);
             const bottomRight = screenToModel(canvas.width, canvas.height);
-            
-            // Grid line ranges
+
             const xStart = Math.floor(topLeft.x / config.gridSpacing) * config.gridSpacing;
             const xEnd = Math.ceil(bottomRight.x / config.gridSpacing) * config.gridSpacing;
-            const yStart = Math.floor(bottomRight.y / config.gridSpacing) * config.gridSpacing; 
+            const yStart = Math.floor(bottomRight.y / config.gridSpacing) * config.gridSpacing;
             const yEnd = Math.ceil(topLeft.y / config.gridSpacing) * config.gridSpacing;
-            
+
             ctx.strokeStyle = "#e0e0e0";
             ctx.lineWidth = 0.5;
             
-            // Vertical lines
+            // vertical
             for (let x = xStart; x <= xEnd; x += config.gridSpacing) {
-                const screenX = modelToScreen(x, 0).x;
+                const sx = modelToScreen(x, 0).x;
                 ctx.beginPath();
-                ctx.moveTo(screenX, 0);
-                ctx.lineTo(screenX, canvas.height);
+                ctx.moveTo(sx, 0);
+                ctx.lineTo(sx, canvas.height);
                 ctx.stroke();
             }
-            
-            // Horizontal lines
+            // horizontal
             for (let y = yStart; y <= yEnd; y += config.gridSpacing) {
-                const screenY = modelToScreen(0, y).y;
+                const sy = modelToScreen(0, y).y;
                 ctx.beginPath();
-                ctx.moveTo(0, screenY);
-                ctx.lineTo(canvas.width, screenY);
+                ctx.moveTo(0, sy);
+                ctx.lineTo(canvas.width, sy);
                 ctx.stroke();
             }
-            
-            // Major lines
+
+            // major lines
             const majorSpacing = Math.max(5 * config.gridSpacing, 1);
             ctx.strokeStyle = "#d0d0d0";
             ctx.lineWidth = 0.8;
-            
-            // Major vertical
             for (let x = Math.floor(xStart / majorSpacing) * majorSpacing; x <= xEnd; x += majorSpacing) {
-                const screenX = modelToScreen(x, 0).x;
+                const sx = modelToScreen(x, 0).x;
                 ctx.beginPath();
-                ctx.moveTo(screenX, 0);
-                ctx.lineTo(screenX, canvas.height);
+                ctx.moveTo(sx, 0);
+                ctx.lineTo(sx, canvas.height);
                 ctx.stroke();
             }
-            
-            // Major horizontal
             for (let y = Math.floor(yStart / majorSpacing) * majorSpacing; y <= yEnd; y += majorSpacing) {
-                const screenY = modelToScreen(0, y).y;
+                const sy = modelToScreen(0, y).y;
                 ctx.beginPath();
-                ctx.moveTo(0, screenY);
-                ctx.lineTo(canvas.width, screenY);
+                ctx.moveTo(0, sy);
+                ctx.lineTo(canvas.width, sy);
                 ctx.stroke();
             }
-            
-            // Axes
+
+            // axes
             ctx.strokeStyle = "#666";
             ctx.lineWidth = 1.5;
-            
-            // X-axis
             ctx.beginPath();
             ctx.moveTo(0, config.originY);
             ctx.lineTo(canvas.width, config.originY);
             ctx.stroke();
-            
-            // Y-axis
             ctx.beginPath();
             ctx.moveTo(config.originX, 0);
             ctx.lineTo(config.originX, canvas.height);
             ctx.stroke();
             
-            // Axis labels
+            // axis labels
             ctx.font = "bold 14px Arial";
             ctx.fillStyle = "#333";
-            
-            // X label
             ctx.textAlign = "center";
             ctx.fillText("X (m)", canvas.width / 2, config.originY + 40);
-            
-            // Y label (rotated)
+
             ctx.save();
             ctx.translate(config.originX - 40, canvas.height / 2);
             ctx.rotate(-Math.PI / 2);
             ctx.fillText("Y (m)", 0, 0);
             ctx.restore();
-            
-            // Minor numeric labels
+
+            // numeric labels
             ctx.font = "12px Arial";
-            // X
             for (let x = xStart; x <= xEnd; x += config.gridSpacing) {
                 if (Math.abs(x) < 0.001) continue;
-                const screenX = modelToScreen(x, 0).x;
+                const sx = modelToScreen(x, 0).x;
                 if (Math.abs(x % majorSpacing) < 0.001) {
                     ctx.fillStyle = "#222";
                     ctx.textAlign = "center";
-                    ctx.fillText(`${x.toFixed(0)}m`, screenX, config.originY + 20);
+                    ctx.fillText(`${x.toFixed(0)}m`, sx, config.originY + 20);
                 } else if (config.gridSpacing >= 0.5) {
                     ctx.fillStyle = "#777";
-                    ctx.fillText(`${x.toFixed(1)}`, screenX, config.originY + 15);
+                    ctx.fillText(`${x.toFixed(1)}`, sx, config.originY + 15);
                 }
             }
-            // Y
             for (let y = yStart; y <= yEnd; y += config.gridSpacing) {
                 if (Math.abs(y) < 0.001) continue;
-                const screenY = modelToScreen(0, y).y;
+                const sy = modelToScreen(0, y).y;
                 if (Math.abs(y % majorSpacing) < 0.001) {
                     ctx.fillStyle = "#222";
                     ctx.textAlign = "right";
-                    ctx.fillText(`${y.toFixed(0)}m`, config.originX - 10, screenY + 4);
+                    ctx.fillText(`${y.toFixed(0)}m`, config.originX - 10, sy + 4);
                 } else if (config.gridSpacing >= 0.5) {
                     ctx.fillStyle = "#777";
-                    ctx.fillText(`${y.toFixed(1)}`, config.originX - 5, screenY + 3);
+                    ctx.fillText(`${y.toFixed(1)}`, config.originX - 5, sy + 3);
                 }
             }
             
-            // Origin label
+            // origin label
             ctx.fillStyle = "#000";
             ctx.font = "bold 12px Arial";
             ctx.textAlign = "left";
             ctx.fillText("(0,0)", config.originX + 5, config.originY - 5);
             
-            // Grid spacing display top-left
+            // top-left grid info
             ctx.fillStyle = "rgba(0,0,0,0.6)";
             ctx.fillRect(10, 10, 160, 30);
             ctx.fillStyle = "white";
             ctx.font = "14px Arial";
             ctx.fillText(`Grid Spacing: ${config.gridSpacing}m`, 20, 30);
-            
+
             ctx.restore();
         }
 
@@ -1081,8 +977,7 @@
                 ctx.arc(sc.x, sc.y, 6, 0, Math.PI*2);
                 ctx.fill();
                 ctx.stroke();
-
-                // label
+                
                 ctx.font = "14px Arial";
                 ctx.fillStyle = "black";
                 ctx.fillText(nid, sc.x+8, sc.y+8);
@@ -1106,7 +1001,6 @@
                 ctx.lineTo(end.x, end.y);
                 ctx.stroke();
 
-                // label at midpoint
                 const mx = (start.x + end.x)/2;
                 const my = (start.y + end.y)/2;
                 const txt = mid;
@@ -1122,10 +1016,8 @@
         }
 
         function drawSupports() {
-            // support size = 1/9 of maxMemberLength
             const s = (maxMemberLength > 0) ? Math.max(0.5, maxMemberLength/9) : 10; 
             const supportPix = s * config.scaleFactor;
-
             for (const node_id in model.supports) {
                 const sup = model.supports[node_id];
                 const nd = model.nodes[node_id];
@@ -1139,7 +1031,6 @@
                         ctx.save();
                         ctx.fillStyle = "#888";
                         ctx.fillRect(-supportPix/2, -supportPix/2, supportPix, supportPix);
-                        // hatching
                         ctx.strokeStyle = "#444";
                         ctx.lineWidth = 1;
                         const hatchSpacing = supportPix/8;
@@ -1157,7 +1048,6 @@
                         ctx.restore();
                         break;
                     case "roller_x":
-                        // left pointing triangle
                         ctx.beginPath();
                         ctx.moveTo(0, 0);
                         ctx.lineTo(-supportPix, -supportPix/2);
@@ -1166,7 +1056,6 @@
                         ctx.fill();
                         break;
                     case "roller_y":
-                        // up pointing triangle
                         ctx.beginPath();
                         ctx.moveTo(0, 0);
                         ctx.lineTo(-supportPix/2, supportPix);
@@ -1175,14 +1064,12 @@
                         ctx.fill();
                         break;
                     case "hinge":
-                        // combine roller_x + roller_y
                         ctx.beginPath();
                         ctx.moveTo(0, 0);
                         ctx.lineTo(-supportPix, -supportPix/2);
                         ctx.lineTo(-supportPix, supportPix/2);
                         ctx.closePath();
                         ctx.fill();
-
                         ctx.beginPath();
                         ctx.moveTo(0, 0);
                         ctx.lineTo(-supportPix/2, supportPix);
@@ -1196,9 +1083,7 @@
         }
 
         function drawLoads() {
-            // For distributed loads, place 7 arrows at t=0,1/6,...,1
             const distributedPositions = [0, 1/6, 2/6, 3/6, 4/6, 5/6, 1];
-            // Arrow size rules
             const arrowLenPointUniform = maxMemberLength * (1/5);
             const arrowLenMinNonuniform = maxMemberLength * (1/7);
             const arrowLenMaxNonuniform = maxMemberLength * (1/5);
@@ -1214,19 +1099,15 @@
                     
                     const arrLenM = arrowLenPointUniform;
                     const arrLenPx = arrLenM * config.scaleFactor;
-
                     let dx = 0, dy = 0;
                     if (Math.abs(fx) > 1e-6) {
-                        dx = (fx < 0) ? -arrLenPx : arrLenPx;
+                        dx = (fx < 0)? -arrLenPx : arrLenPx;
                     }
                     if (Math.abs(fy) > 1e-6) {
-                        dy = (fy < 0) ? arrLenPx : -arrLenPx; 
+                        dy = (fy < 0)? arrLenPx : -arrLenPx;
                     }
-                    const startX = sc.x - dx;
-                    const startY = sc.y - dy;
-
-                    drawArrow(startX, startY, sc.x, sc.y, "red");
-                    // label
+                    drawArrow(sc.x - dx, sc.y - dy, sc.x, sc.y, "red");
+                    
                     ctx.font = "12px Arial";
                     ctx.fillStyle = "red";
                     let label = "";
@@ -1237,7 +1118,7 @@
                     } else if (Math.abs(fy) > 1e-6) {
                         label = `${Math.abs(fy)}N`;
                     }
-                    ctx.fillText(label, startX, startY);
+                    ctx.fillText(label, sc.x - dx, sc.y - dy);
                 }
                 else if (ld.type === "uniform") {
                     const mem = model.members[ld.member];
@@ -1251,24 +1132,21 @@
                     const arrLenPx = arrowLenPointUniform * config.scaleFactor;
                     const fx = ld.values[0];
                     const fy = ld.values[1];
-
-                    // 7 arrows
+                    
                     for (let i=0; i<distributedPositions.length; i++){
                         const t = distributedPositions[i];
                         const xM = sn.x + t*dxm;
                         const yM = sn.y + t*dym;
                         const sc = modelToScreen(xM, yM);
-                        
                         let ax = 0, ay = 0;
                         if (Math.abs(fx) > 1e-6) {
-                            ax = (fx < 0) ? -arrLenPx : arrLenPx;
+                            ax = (fx < 0)? -arrLenPx : arrLenPx;
                         }
                         if (Math.abs(fy) > 1e-6) {
-                            ay = (fy < 0) ? arrLenPx : -arrLenPx;
+                            ay = (fy < 0)? arrLenPx : -arrLenPx;
                         }
                         drawArrow(sc.x - ax, sc.y - ay, sc.x, sc.y, "red");
                     }
-                    // label near midpoint
                     const midX = sn.x + 0.5*dxm;
                     const midY = sn.y - 0.5*dym;
                     const midS = modelToScreen(midX, midY);
@@ -1300,13 +1178,11 @@
                     const startVal = ld.start_val ?? -1000;
                     const endVal = ld.end_val ?? -500;
 
-                    // 7 arrows, each with linear interpolation
                     for (let i=0; i<distributedPositions.length; i++){
                         const t = distributedPositions[i];
-                        const valT = startVal + t*(endVal - startVal); 
+                        const valT = startVal + t*(endVal - startVal);
                         const absValT = Math.abs(valT);
 
-                        // map absValT to [minPx..maxPx]
                         const absStart = Math.abs(startVal);
                         const absEnd   = Math.abs(endVal);
                         const dataMin = Math.min(absStart, absEnd);
@@ -1314,30 +1190,27 @@
                         const range = Math.max(dataMax - dataMin, 1e-6);
                         const fraction = (absValT - dataMin)/range; 
                         let arrowPx = minPx + fraction*(maxPx - minPx);
-                        
+
                         const xM = sn.x + t*dxm;
                         const yM = sn.y + t*dym;
                         const sc = modelToScreen(xM, yM);
 
                         let ax = 0, ay = 0;
                         if (dir === "x") {
-                            ax = (valT < 0) ? -arrowPx : arrowPx;
+                            ax = (valT < 0)? -arrowPx : arrowPx;
                         } else {
-                            ay = (valT < 0) ? arrowPx : -arrowPx;
+                            ay = (valT < 0)? arrowPx : -arrowPx;
                         }
                         drawArrow(sc.x - ax, sc.y - ay, sc.x, sc.y, "red");
                     }
-
-                    // label near midpoint
                     const midX = sn.x + 0.5*dxm;
                     const midY = sn.y + 0.5*dym;
                     const midS = modelToScreen(midX, midY);
                     ctx.font = "12px Arial";
                     ctx.fillStyle = "red";
                     ctx.fillText(`[${Math.abs(startVal)} -> ${Math.abs(endVal)}] N/m`, 
-                        midS.x, 
-                        midS.y + maxPx*Math.sign(startVal)
-                    );
+                                 midS.x, 
+                                 midS.y + maxPx*Math.sign(startVal));
                 }
             }
         }
@@ -1348,7 +1221,6 @@
             const dy = toY - fromY;
             const angle = Math.atan2(dy, dx);
 
-            // line
             ctx.beginPath();
             ctx.strokeStyle = color;
             ctx.lineWidth = 2;
@@ -1356,7 +1228,6 @@
             ctx.lineTo(toX, toY);
             ctx.stroke();
 
-            // arrowhead
             ctx.beginPath();
             ctx.fillStyle = color;
             ctx.moveTo(toX, toY);
@@ -1372,10 +1243,8 @@
             ctx.fill();
         }
 
-        // Initial
-        updateOptionsVisibility();
-        updateModelStats();
         draw();
+        updateModelStats();
     </script>
 </body>
 </html>
